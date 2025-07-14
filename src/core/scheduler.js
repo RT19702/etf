@@ -87,7 +87,7 @@ class ETFScheduler {
    * @private
    */
   _registerJobs() {
-    const schedules = this.config.schedules || {};
+    const schedules = this.config.scheduler?.schedules || {};
 
     // 开盘前策略分析
     if (schedules.preMarket) {
@@ -142,7 +142,7 @@ class ETFScheduler {
     try {
       const job = cron.schedule(cronExpression, callback, {
         scheduled: false,
-        timezone: this.config.timezone || 'Asia/Shanghai'
+        timezone: this.config.scheduler?.timezone || 'Asia/Shanghai'
       });
       
       job.start();

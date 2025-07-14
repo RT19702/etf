@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // 增强版ETF策略定时推送启动脚本
-const ETFSchedulerApp = require('../src/scheduler');
+const ETFScheduler = require('../src/core/scheduler');
+const { CONFIG } = require('../src/core/config');
 
 // 颜色输出工具
 const COLORS = {
@@ -35,8 +36,23 @@ console.log('');
 
 async function startEnhancedScheduler() {
   try {
-    const app = new ETFSchedulerApp();
-    await app.start();
+    // 创建调度器实例并传入配置
+    const scheduler = new ETFScheduler(CONFIG);
+    await scheduler.start();
+
+    // 保持进程运行
+    process.on('SIGINT', () => {
+      console.log(color('\n🛑 接收到停止信号，正在关闭调度器...', 'yellow'));
+      scheduler.stop();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', () => {
+      console.log(color('\n🛑 接收到终止信号，正在关闭调度器...', 'yellow'));
+      scheduler.stop();
+      process.exit(0);
+    });
+
   } catch (error) {
     console.error(color(`❌ 增强版定时任务启动失败: ${error.message}`, 'red'));
     process.exit(1);
