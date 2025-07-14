@@ -1,0 +1,29 @@
+{
+  "name": "etf",
+  "version": "1.0.0",
+  "main": "enhanced-strategy.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node enhanced-strategy.js",
+    "auto": "node scripts/start-enhanced-scheduler.js",
+    "push": "node scripts/manual-push.js",
+    "quick-test": "node scripts/quick-test.js",
+    "setup-wechat": "node scripts/setup-wechat.js",
+    "verify": "node scripts/verify-features.js",
+    "help": "echo \"Available commands: npm start, npm run auto, npm run push, npm run quick-test, npm run verify\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "bottleneck": "^2.19.5",
+    "chalk": "^5.4.1",
+    "dayjs": "^1.11.13",
+    "decimal.js": "^10.5.0",
+    "dotenv": "^16.6.0",
+    "moment": "^2.30.1",
+    "node-cron": "^4.2.0"
+  }
+}

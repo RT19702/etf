@@ -1,0 +1,139 @@
+# ===== ETF策略系统 Git忽略文件 =====
+
+# 🔐 敏感配置文件
+config/.env
+config/.env.local
+config/.env.production
+config/.env.development
+*.env
+*.env.*
+
+# 🔑 API密钥和认证信息
+**/api-keys.json
+**/credentials.json
+**/secrets.json
+**/auth.json
+
+# 📱 企业微信配置
+**/wechat-config.json
+**/webhook-urls.txt
+
+# 📊 数据文件
+data/
+data/**
+*.csv
+*.xlsx
+*.xls
+historical_data/
+backtest_results/
+cache/
+
+# 📋 日志文件
+logs/
+*.log
+error.log
+success.log
+debug.log
+strategy_*.log
+wechat_*.log
+scheduler.log
+
+# 📄 报告文件
+reports/
+data/reports/
+*.html
+*.pdf
+*_report.json
+*_report.html
+
+# 🔧 临时文件
+temp/
+tmp/
+*.tmp
+*.temp
+.cache/
+
+# 📦 Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# 🔍 IDE和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 🧪 测试文件
+test-*.js
+debug-*.js
+simple-test.js
+*-test.js
+coverage/
+
+# 📈 回测数据
+backtest/
+backtests/
+performance/
+*.backtest
+
+# 🔄 进程文件
+*.pid
+.pm2/
+
+# 📊 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 🎯 构建输出
+dist/
+build/
+out/
+
+# 🔐 证书文件
+*.pem
+*.key
+*.crt
+*.cert
+
+# 📱 移动端
+*.apk
+*.ipa
+
+# 🖼️ 图片缓存
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+charts/
+images/
+
+# 📊 Excel和CSV数据
+*.csv
+*.xlsx
+*.xls
+
+# 🔧 系统文件
+.env.example
+.env.template
+
+# ===== 保留的文件 =====
+# 以下文件会被保留在Git中：
+# - config/.env.example (配置模板)
+# - README.md
+# - package.json
+# - 源代码文件 (src/*)
+# - 文档文件 (docs/*)
+# - 脚本文件 (scripts/*)
+
+# 🚫 特别注意：
+# 如果您需要添加新的敏感文件类型，请在此文件中添加相应的规则
+# 确保不要将包含真实API密钥、企业微信webhook URL等敏感信息的文件提交到Git
