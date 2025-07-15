@@ -11,7 +11,7 @@ const WeChatBot = require('./src/utils/wechatBot');
 const TechnicalIndicators = require('./src/utils/technicalIndicators');
 const BacktestEngine = require('./src/utils/backtestEngine');
 const DataSourceManager = require('./src/utils/dataSourceManager');
-const SpecialWatchManager = require('./src/utils/specialWatch');
+const { SpecialWatchManager } = require('./src/utils/specialWatch');
 
 decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
 

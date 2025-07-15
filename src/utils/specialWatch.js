@@ -1,20 +1,203 @@
 // 📋 特别关注ETF模块
 
+/**
+ * 动态关注条件检测器
+ * 基于实时技术指标和市场条件动态识别值得关注的ETF
+ */
+class DynamicWatchDetector {
+  constructor() {
+    this.enabled = process.env.ENABLE_SPECIAL_WATCH !== 'false';
+    // 动态关注条件的阈值（支持环境变量配置）
+    this.thresholds = {
+      rsi_oversold: Number(process.env.DYNAMIC_RSI_OVERSOLD_THRESHOLD) || 30,
+      rsi_overbought: 70,         // RSI超买阈值
+      volume_spike_ratio: Number(process.env.DYNAMIC_VOLUME_SPIKE_RATIO) || 1.5,
+      technical_score_min: Number(process.env.DYNAMIC_TECHNICAL_SCORE_MIN) || 70,
+      price_change_threshold: Number(process.env.DYNAMIC_PRICE_CHANGE_THRESHOLD) || 3.0,
+      volatility_high: 5.0        // 高波动率阈值(%)
+    };
+  }
+
+  /**
+   * 动态检测ETF是否值得特别关注
+   * @param {Object} etfData - ETF数据
+   * @returns {Object|null} 关注提示信息
+   */
+  detectWatchConditions(etfData) {
+    if (!this.enabled) {
+      return null;
+    }
+
+    const triggeredConditions = [];
+    let priority = 'low';
+    let reason = '市场异常';
+
+    // 检查RSI超卖状态 (高优先级)
+    const rsiCondition = this._checkRSIOversold(etfData);
+    if (rsiCondition.triggered) {
+      triggeredConditions.push(rsiCondition);
+      priority = 'high';
+      reason = 'RSI超卖，可能反弹机会';
+    }
+
+    // 检查异常成交量放大 (中优先级)
+    const volumeCondition = this._checkVolumeSpike(etfData);
+    if (volumeCondition.triggered) {
+      triggeredConditions.push(volumeCondition);
+      if (priority === 'low') {
+        priority = 'medium';
+        reason = '成交量异常放大，资金关注';
+      }
+    }
+
+    // 检查技术评分改善 (中优先级)
+    const scoreCondition = this._checkTechnicalScoreImprovement(etfData);
+    if (scoreCondition.triggered) {
+      triggeredConditions.push(scoreCondition);
+      if (priority === 'low') {
+        priority = 'medium';
+        reason = '技术指标转好，趋势改善';
+      }
+    }
+
+    // 检查价格异常波动 (低优先级)
+    const priceCondition = this._checkPriceAbnormalMovement(etfData);
+    if (priceCondition.triggered) {
+      triggeredConditions.push(priceCondition);
+      if (priority === 'low') {
+        reason = '价格异常波动，需要关注';
+      }
+    }
+
+    // 如果没有触发任何条件，返回null
+    if (triggeredConditions.length === 0) {
+      return null;
+    }
+
+    return {
+      symbol: etfData.symbol,
+      name: etfData.name,
+      priority: priority,
+      reason: reason,
+      triggeredConditions,
+      currentData: {
+        price: etfData.current,
+        rsi: etfData.technicalIndicators?.rsi,
+        technicalScore: etfData.technicalScore?.score,
+        priceChange: this._calculatePriceChange(etfData),
+        volatility: parseFloat(etfData.volatility?.replace('%', '') || '0'),
+        volumeRatio: etfData.volumeRatio || 1.0
+      }
+    };
+  }
+
+  /**
+   * 检查RSI超卖状态
+   * @private
+   */
+  _checkRSIOversold(etfData) {
+    const rsi = etfData.technicalIndicators?.rsi;
+
+    if (rsi && rsi < this.thresholds.rsi_oversold) {
+      return {
+        triggered: true,
+        condition: 'rsi_oversold',
+        message: `RSI超卖 (${rsi.toFixed(1)})`,
+        severity: 'high',
+        value: rsi
+      };
+    }
+    return { triggered: false };
+  }
+
+  /**
+   * 检查异常成交量放大
+   * @private
+   */
+  _checkVolumeSpike(etfData) {
+    const volumeRatio = etfData.volumeRatio || 1.0;
+
+    if (volumeRatio >= this.thresholds.volume_spike_ratio) {
+      return {
+        triggered: true,
+        condition: 'volume_spike',
+        message: `成交量放大 (${(volumeRatio * 100).toFixed(0)}%)`,
+        severity: 'medium',
+        value: volumeRatio
+      };
+    }
+    return { triggered: false };
+  }
+
+  /**
+   * 检查技术评分改善
+   * @private
+   */
+  _checkTechnicalScoreImprovement(etfData) {
+    const score = etfData.technicalScore?.score;
+
+    if (score && score >= this.thresholds.technical_score_min) {
+      return {
+        triggered: true,
+        condition: 'technical_score_high',
+        message: `技术评分优秀 (${score}分)`,
+        severity: 'medium',
+        value: score
+      };
+    }
+    return { triggered: false };
+  }
+
+  /**
+   * 检查价格异常波动
+   * @private
+   */
+  _checkPriceAbnormalMovement(etfData) {
+    const priceChange = Math.abs(this._calculatePriceChange(etfData));
+
+    if (priceChange >= this.thresholds.price_change_threshold) {
+      return {
+        triggered: true,
+        condition: 'price_abnormal',
+        message: `价格异常波动 (${priceChange.toFixed(1)}%)`,
+        severity: 'low',
+        value: priceChange
+      };
+    }
+    return { triggered: false };
+  }
+
+  /**
+   * 计算价格变化百分比
+   * @private
+   */
+  _calculatePriceChange(etfData) {
+    if (etfData.current && etfData.ma5) {
+      return ((etfData.current - etfData.ma5) / etfData.ma5) * 100;
+    }
+    return 0;
+  }
+}
+
 class SpecialWatchManager {
   constructor() {
     this.watchList = this.loadWatchList();
     this.enabled = process.env.ENABLE_SPECIAL_WATCH !== 'false';
+    // 创建动态检测器实例
+    this.dynamicDetector = new DynamicWatchDetector();
+    // 判断是否使用动态模式（如果没有静态配置，则使用动态模式）
+    this.useDynamicMode = this.watchList.length === 0;
   }
 
   /**
-   * 加载特别关注列表
+   * 加载特别关注列表（兼容模式）
    */
   loadWatchList() {
     try {
       const watchListJson = process.env.SPECIAL_WATCH_LIST || '[]';
       return JSON.parse(watchListJson);
     } catch (error) {
-      console.warn('⚠️ 特别关注列表配置解析失败，使用默认配置');
+      console.warn('⚠️ 特别关注列表配置解析失败，将使用动态模式');
       return [];
     }
   }
@@ -25,12 +208,21 @@ class SpecialWatchManager {
    * @returns {Object|null} 关注提示信息
    */
   checkWatchConditions(etfData) {
-    if (!this.enabled || this.watchList.length === 0) {
+    if (!this.enabled) {
       return null;
     }
 
-    // 查找匹配的关注配置
-    const watchConfig = this.watchList.find(watch => 
+    // 如果使用动态模式，调用动态检测器
+    if (this.useDynamicMode) {
+      return this.dynamicDetector.detectWatchConditions(etfData);
+    }
+
+    // 静态模式：查找匹配的关注配置
+    if (this.watchList.length === 0) {
+      return null;
+    }
+
+    const watchConfig = this.watchList.find(watch =>
       watch.symbol === etfData.symbol || watch.name === etfData.name
     );
 
@@ -363,4 +555,4 @@ class SpecialWatchManager {
   }
 }
 
-module.exports = SpecialWatchManager;
+module.exports = { SpecialWatchManager, DynamicWatchDetector };
