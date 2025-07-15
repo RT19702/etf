@@ -65,6 +65,8 @@ async function analyzeSymbolEnhanced(etf) {
     
     const recent = kline.slice(-CONFIG.lookbackDays);
     const prices = recent.map(d => d.close);
+    const highs = recent.map(d => d.high);
+    const lows = recent.map(d => d.low);
     const volumes = recent.map(d => d.volume);
     
     // 基础统计
@@ -77,11 +79,15 @@ async function analyzeSymbolEnhanced(etf) {
       return null;
     }
     
-    // 计算技术指标
+    // 计算技术指标（增强版 - 包含新增指标）
     const technicalIndicators = {
       rsi: TechnicalIndicators.calculateRSI(prices),
       macd: TechnicalIndicators.calculateMACD(prices),
       bollinger: TechnicalIndicators.calculateBollingerBands(prices),
+      kdj: TechnicalIndicators.calculateKDJ(highs, lows, prices),
+      williamsR: TechnicalIndicators.calculateWilliamsR(highs, lows, prices),
+      cci: TechnicalIndicators.calculateCCI(highs, lows, prices),
+      atr: TechnicalIndicators.calculateATR(highs, lows, prices),
       volumeRatio: TechnicalIndicators.calculateVolumeRatio(volumes),
       momentum: TechnicalIndicators.calculateMomentum(prices),
       currentPrice: current
@@ -313,8 +319,18 @@ function generateEnhancedReport(strategies, stats) {
       技术评分: s.technicalScore?.score?.toFixed(0) || 'N/A',
       信号强度: s.signal?.confidence || '中等',
       RSI: s.technicalIndicators?.rsi?.toFixed(2) || 'N/A',
-      MACD: s.technicalIndicators?.macd ? 
+      MACD: s.technicalIndicators?.macd ?
         `${s.technicalIndicators.macd.macd.toFixed(4)}/${s.technicalIndicators.macd.signal.toFixed(4)}` : 'N/A',
+      KDJ_K: s.technicalIndicators?.kdj?.k || 'N/A',
+      KDJ_D: s.technicalIndicators?.kdj?.d || 'N/A',
+      KDJ_J: s.technicalIndicators?.kdj?.j || 'N/A',
+      KDJ信号: s.technicalIndicators?.kdj?.signal || 'N/A',
+      威廉指标: s.technicalIndicators?.williamsR?.value || 'N/A',
+      威廉信号: s.technicalIndicators?.williamsR?.signal || 'N/A',
+      CCI: s.technicalIndicators?.cci?.value || 'N/A',
+      CCI信号: s.technicalIndicators?.cci?.signal || 'N/A',
+      ATR: s.technicalIndicators?.atr?.value || 'N/A',
+      ATR百分比: s.technicalIndicators?.atr?.percentage || 'N/A',
       价格偏离: `${(((s.current - s.ma5) / s.ma5) * 100).toFixed(2)}%`,
       风险等级: getRiskLevel(s.volatility)
     })),

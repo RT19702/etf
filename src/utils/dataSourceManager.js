@@ -190,15 +190,18 @@ class DataSourceManager {
     const response = await axios.get(`${this.dataSources.primary.kline}?symbol=${symbol}&scale=240&datalen=${days + 10}`, {
       timeout: 10000
     });
-    
+
     if (Array.isArray(response.data)) {
       return response.data.reverse().map(d => ({
         date: d.day,
+        open: parseFloat(d.open),
+        high: parseFloat(d.high),
+        low: parseFloat(d.low),
         close: parseFloat(d.close),
         volume: parseFloat(d.volume || 0)
       }));
     }
-    
+
     return [];
   }
   
@@ -218,6 +221,9 @@ class DataSourceManager {
     if (response.data && Array.isArray(response.data)) {
       return response.data.map(d => ({
         date: d.day,
+        open: parseFloat(d.open),
+        high: parseFloat(d.high),
+        low: parseFloat(d.low),
         close: parseFloat(d.close),
         volume: parseFloat(d.volume || 0)
       }));
@@ -241,6 +247,9 @@ class DataSourceManager {
     if (response.data && response.data.data) {
       return response.data.data.slice(-days).map(d => ({
         date: d[0],
+        open: parseFloat(d[1]),
+        high: parseFloat(d[2]),
+        low: parseFloat(d[3]),
         close: parseFloat(d[4]),
         volume: parseFloat(d[5] || 0)
       }));
