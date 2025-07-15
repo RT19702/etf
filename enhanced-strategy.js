@@ -12,6 +12,7 @@ const TechnicalIndicators = require('./src/utils/technicalIndicators');
 const BacktestEngine = require('./src/utils/backtestEngine');
 const DataSourceManager = require('./src/utils/dataSourceManager');
 const { SpecialWatchManager } = require('./src/utils/specialWatch');
+const HTMLReportGenerator = require('./src/utils/htmlReportGenerator');
 
 decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
 
@@ -39,6 +40,7 @@ const CONFIG = {
 // 初始化数据源管理器和特别关注管理器
 const dataSourceManager = new DataSourceManager();
 const specialWatchManager = new SpecialWatchManager();
+const htmlReportGenerator = new HTMLReportGenerator();
 
 const limiter = new Bottleneck({
   minTime: 500,
@@ -318,10 +320,7 @@ function generateEnhancedReport(strategies, stats) {
     })),
     dataSourceStatus: dataSourceManager.getStatus()
   };
-  
-  // 保存增强报告
-  fs.writeFileSync('./data/reports/enhanced_etf_report.json', JSON.stringify(report, null, 2));
-  
+
   return report;
 }
 
@@ -536,8 +535,18 @@ async function runEnhancedStrategy() {
     console.log(`可用数据源: ${dsStatus.sources.filter(s => s.status === 'active').length}个`);
     console.log('');
 
-    // HTML报告功能已移除，专注于JSON报告和企业微信推送
+    // 生成JSON报告
+    const jsonReportPath = './data/reports/enhanced_etf_report.json';
+    fs.writeFileSync(jsonReportPath, JSON.stringify(report, null, 2));
     console.log(color('📄 JSON报告已生成: ./data/reports/enhanced_etf_report.json', 'green'));
+
+    // 生成HTML报告
+    try {
+      htmlReportGenerator.generateEnhancedReport(report);
+      console.log(color('🌐 HTML报告已生成: ./data/reports/etf_report.html', 'green'));
+    } catch (error) {
+      console.error(color(`❌ HTML报告生成失败: ${error.message}`, 'red'));
+    }
 
     // 企业微信推送
     await sendWeChatNotification(report);
