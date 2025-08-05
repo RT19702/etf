@@ -386,125 +386,330 @@ class TechnicalIndicators {
   /**
    * 综合技术分析评分（增强版）
    * @param {Object} indicators - 各项技术指标
+   * @param {Object} marketContext - 市场环境上下文
    */
-  static getTechnicalScore(indicators) {
+  static getTechnicalScore(indicators, marketContext = {}) {
     let score = 50; // 中性分数
     let signals = [];
 
-    // RSI评分 (权重: 20%)
+    // 根据市场环境动态调整权重
+    const weights = this.getAdaptiveWeights(marketContext);
+    const thresholds = this.getAdaptiveThresholds(marketContext);
+
+    // RSI评分 (动态权重)
     if (indicators.rsi) {
-      if (indicators.rsi < 30) {
-        score += 20;
-        signals.push('RSI超卖');
-      } else if (indicators.rsi > 70) {
-        score -= 20;
-        signals.push('RSI超买');
-      }
+      const rsiScore = this.calculateRSIScore(indicators.rsi, thresholds.rsi);
+      score += rsiScore.score * weights.rsi;
+      if (rsiScore.signal) signals.push(rsiScore.signal);
     }
 
-    // MACD评分 (权重: 15%)
+    // MACD评分 (动态权重)
     if (indicators.macd) {
-      if (indicators.macd.macd > indicators.macd.signal) {
-        score += 15;
-        signals.push('MACD金叉');
-      } else {
-        score -= 15;
-        signals.push('MACD死叉');
-      }
+      const macdScore = this.calculateMACDScore(indicators.macd);
+      score += macdScore.score * weights.macd;
+      if (macdScore.signal) signals.push(macdScore.signal);
     }
 
-    // 布林带评分 (权重: 10%)
+    // 布林带评分 (动态权重)
     if (indicators.bollinger) {
-      const currentPrice = indicators.currentPrice;
-      if (currentPrice < indicators.bollinger.lower) {
-        score += 10;
-        signals.push('跌破布林下轨');
-      } else if (currentPrice > indicators.bollinger.upper) {
-        score -= 10;
-        signals.push('突破布林上轨');
-      }
+      const bbScore = this.calculateBollingerScore(indicators.currentPrice, indicators.bollinger);
+      score += bbScore.score * weights.bollinger;
+      if (bbScore.signal) signals.push(bbScore.signal);
     }
 
-    // KDJ评分 (权重: 15%)
+    // KDJ评分 (动态权重)
     if (indicators.kdj) {
-      const k = parseFloat(indicators.kdj.k);
-      const d = parseFloat(indicators.kdj.d);
-      if (k < 20 && d < 20) {
-        score += 15;
-        signals.push('KDJ超卖');
-      } else if (k > 80 && d > 80) {
-        score -= 15;
-        signals.push('KDJ超买');
-      } else if (k > d && k < 50) {
-        score += 8;
-        signals.push('KDJ金叉');
-      } else if (k < d && k > 50) {
-        score -= 8;
-        signals.push('KDJ死叉');
-      }
+      const kdjScore = this.calculateKDJScore(indicators.kdj, thresholds.kdj);
+      score += kdjScore.score * weights.kdj;
+      if (kdjScore.signal) signals.push(kdjScore.signal);
     }
 
-    // 威廉指标评分 (权重: 10%)
+    // 威廉指标评分 (动态权重)
     if (indicators.williamsR) {
-      const wr = parseFloat(indicators.williamsR.value);
-      if (wr < -80) {
-        score += 10;
-        signals.push('威廉超卖');
-      } else if (wr > -20) {
-        score -= 10;
-        signals.push('威廉超买');
-      }
+      const wrScore = this.calculateWilliamsScore(indicators.williamsR, thresholds.williams);
+      score += wrScore.score * weights.williams;
+      if (wrScore.signal) signals.push(wrScore.signal);
     }
 
-    // CCI评分 (权重: 10%)
+    // CCI评分 (动态权重)
     if (indicators.cci) {
-      const cci = parseFloat(indicators.cci.value);
-      if (cci < -100) {
-        score += 10;
-        signals.push('CCI超卖');
-      } else if (cci > 100) {
-        score -= 10;
-        signals.push('CCI超买');
-      }
+      const cciScore = this.calculateCCIScore(indicators.cci, thresholds.cci);
+      score += cciScore.score * weights.cci;
+      if (cciScore.signal) signals.push(cciScore.signal);
     }
 
-    // 成交量评分 (权重: 5%)
-    if (indicators.volumeRatio > 1.5) {
-      score += 5;
-      signals.push('放量');
-    } else if (indicators.volumeRatio < 0.5) {
-      score -= 5;
-      signals.push('缩量');
-    }
+    // 成交量评分 (动态权重)
+    const volumeScore = this.calculateVolumeScore(indicators.volumeRatio, thresholds.volume);
+    score += volumeScore.score * weights.volume;
+    if (volumeScore.signal) signals.push(volumeScore.signal);
 
-    // 动量评分 (权重: 10%)
-    if (indicators.momentum > 5) {
-      score += 10;
-      signals.push('强势动量');
-    } else if (indicators.momentum < -5) {
-      score -= 10;
-      signals.push('弱势动量');
-    }
+    // 动量评分 (动态权重)
+    const momentumScore = this.calculateMomentumScore(indicators.momentum, thresholds.momentum);
+    score += momentumScore.score * weights.momentum;
+    if (momentumScore.signal) signals.push(momentumScore.signal);
 
-    // ATR波动率调整 (权重: 5%)
+    // ATR波动率调整 (动态权重)
     if (indicators.atr) {
-      const atrPct = parseFloat(indicators.atr.percentage);
-      if (atrPct > 3) {
-        score -= 5; // 高波动率降低评分
-        signals.push('高波动率');
-      } else if (atrPct < 1) {
-        score += 3; // 低波动率略微加分
-        signals.push('低波动率');
-      }
+      const atrScore = this.calculateATRScore(indicators.atr, thresholds.atr);
+      score += atrScore.score * weights.atr;
+      if (atrScore.signal) signals.push(atrScore.signal);
     }
+
+    // 指标一致性加权
+    const consistencyBonus = this.calculateConsistencyBonus(signals);
+    score += consistencyBonus;
 
     return {
       score: Math.max(0, Math.min(100, score)),
       signals: signals,
-      level: this.getScoreLevel(score)
+      level: this.getScoreLevel(score),
+      consistency: consistencyBonus,
+      weights: weights
     };
   }
+
+  /**
+   * 根据市场环境获取动态权重
+   */
+  static getAdaptiveWeights(marketContext) {
+    const { trend = 'neutral', volatility = 'normal', volume = 'normal' } = marketContext;
+
+    // 基础权重
+    let weights = {
+      rsi: 0.20,
+      macd: 0.15,
+      bollinger: 0.10,
+      kdj: 0.15,
+      williams: 0.10,
+      cci: 0.10,
+      volume: 0.05,
+      momentum: 0.10,
+      atr: 0.05
+    };
+
+    // 根据市场趋势调整权重
+    if (trend === 'bullish') {
+      weights.momentum += 0.05; // 牛市中动量更重要
+      weights.rsi -= 0.03;
+    } else if (trend === 'bearish') {
+      weights.rsi += 0.05; // 熊市中RSI更重要
+      weights.momentum -= 0.03;
+    }
+
+    // 根据波动率调整权重
+    if (volatility === 'high') {
+      weights.atr += 0.05; // 高波动时ATR更重要
+      weights.bollinger += 0.03;
+      weights.volume -= 0.03;
+    } else if (volatility === 'low') {
+      weights.volume += 0.03; // 低波动时成交量更重要
+      weights.atr -= 0.02;
+    }
+
+    return weights;
+  }
+
+  /**
+   * 根据市场环境获取动态阈值
+   */
+  static getAdaptiveThresholds(marketContext) {
+    const { trend = 'neutral', volatility = 'normal' } = marketContext;
+
+    let thresholds = {
+      rsi: { oversold: 30, overbought: 70 },
+      kdj: { oversold: 20, overbought: 80 },
+      williams: { oversold: -80, overbought: -20 },
+      cci: { oversold: -100, overbought: 100 },
+      volume: { low: 0.5, high: 1.5 },
+      momentum: { weak: -5, strong: 5 },
+      atr: { low: 1, high: 3 }
+    };
+
+    // 牛市中提高超买容忍度
+    if (trend === 'bullish') {
+      thresholds.rsi.overbought = 75;
+      thresholds.kdj.overbought = 85;
+      thresholds.williams.overbought = -15;
+    }
+
+    // 熊市中提高超卖敏感度
+    if (trend === 'bearish') {
+      thresholds.rsi.oversold = 35;
+      thresholds.kdj.oversold = 25;
+      thresholds.williams.oversold = -75;
+    }
+
+    // 高波动时调整阈值
+    if (volatility === 'high') {
+      thresholds.atr.high = 5;
+      thresholds.momentum.strong = 8;
+      thresholds.momentum.weak = -8;
+    }
+
+    return thresholds;
+  }
   
+  /**
+   * 计算RSI评分
+   */
+  static calculateRSIScore(rsi, thresholds) {
+    if (rsi < thresholds.oversold) {
+      return { score: 20, signal: `RSI超卖(${rsi.toFixed(1)})` };
+    } else if (rsi > thresholds.overbought) {
+      return { score: -12, signal: `RSI超买(${rsi.toFixed(1)})` }; // 减少惩罚
+    } else if (rsi >= 40 && rsi <= 60) {
+      return { score: 5, signal: 'RSI中性偏好' }; // 中性区间加分
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算MACD评分
+   */
+  static calculateMACDScore(macd) {
+    if (macd.macd > macd.signal) {
+      const strength = Math.min(Math.abs(macd.histogram) * 10, 15);
+      return { score: strength, signal: 'MACD金叉' };
+    } else {
+      const weakness = Math.min(Math.abs(macd.histogram) * 10, 15);
+      return { score: -weakness, signal: 'MACD死叉' };
+    }
+  }
+
+  /**
+   * 计算布林带评分
+   */
+  static calculateBollingerScore(currentPrice, bollinger) {
+    const position = (currentPrice - bollinger.lower) / (bollinger.upper - bollinger.lower);
+
+    if (position < 0.1) {
+      return { score: 12, signal: '接近布林下轨' };
+    } else if (position > 0.9) {
+      return { score: -8, signal: '接近布林上轨' }; // 减少惩罚
+    } else if (position >= 0.4 && position <= 0.6) {
+      return { score: 3, signal: '布林中轨附近' };
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算KDJ评分
+   */
+  static calculateKDJScore(kdj, thresholds) {
+    const k = parseFloat(kdj.k);
+    const d = parseFloat(kdj.d);
+    const j = parseFloat(kdj.j);
+
+    if (k < thresholds.oversold && d < thresholds.oversold) {
+      return { score: 15, signal: 'KDJ超卖' };
+    } else if (k > thresholds.overbought && d > thresholds.overbought) {
+      return { score: -10, signal: 'KDJ超买' }; // 减少惩罚
+    } else if (k > d && k < 50) {
+      return { score: 8, signal: 'KDJ金叉' };
+    } else if (k < d && k > 50) {
+      return { score: -6, signal: 'KDJ死叉' }; // 减少惩罚
+    } else if (j > 100) {
+      return { score: -5, signal: 'J值极度超买' };
+    } else if (j < 0) {
+      return { score: 8, signal: 'J值极度超卖' };
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算威廉指标评分
+   */
+  static calculateWilliamsScore(williamsR, thresholds) {
+    const wr = parseFloat(williamsR.value);
+
+    if (wr < thresholds.oversold) {
+      return { score: 10, signal: '威廉超卖' };
+    } else if (wr > thresholds.overbought) {
+      return { score: -8, signal: '威廉超买' }; // 减少惩罚
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算CCI评分
+   */
+  static calculateCCIScore(cci, thresholds) {
+    const cciValue = parseFloat(cci.value);
+
+    if (cciValue < thresholds.oversold) {
+      return { score: 10, signal: 'CCI超卖' };
+    } else if (cciValue > thresholds.overbought) {
+      return { score: -8, signal: 'CCI超买' }; // 减少惩罚
+    } else if (cciValue > 0 && cciValue < 50) {
+      return { score: 3, signal: 'CCI温和看涨' };
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算成交量评分
+   */
+  static calculateVolumeScore(volumeRatio, thresholds) {
+    if (volumeRatio > thresholds.high) {
+      return { score: 5, signal: '放量' };
+    } else if (volumeRatio < thresholds.low) {
+      return { score: -3, signal: '缩量' }; // 减少惩罚
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算动量评分
+   */
+  static calculateMomentumScore(momentum, thresholds) {
+    if (momentum > thresholds.strong) {
+      return { score: 10, signal: '强势动量' };
+    } else if (momentum < thresholds.weak) {
+      return { score: -8, signal: '弱势动量' }; // 减少惩罚
+    } else if (momentum > 0 && momentum < thresholds.strong) {
+      return { score: 3, signal: '温和上涨动量' };
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算ATR评分
+   */
+  static calculateATRScore(atr, thresholds) {
+    const atrPct = parseFloat(atr.percentage);
+
+    if (atrPct > thresholds.high) {
+      return { score: -3, signal: '高波动率' }; // 减少惩罚
+    } else if (atrPct < thresholds.low) {
+      return { score: 3, signal: '低波动率' };
+    }
+    return { score: 0, signal: null };
+  }
+
+  /**
+   * 计算指标一致性加权
+   */
+  static calculateConsistencyBonus(signals) {
+    const bullishSignals = signals.filter(s =>
+      s.includes('超卖') || s.includes('金叉') || s.includes('强势') || s.includes('放量')
+    ).length;
+
+    const bearishSignals = signals.filter(s =>
+      s.includes('超买') || s.includes('死叉') || s.includes('弱势') || s.includes('缩量')
+    ).length;
+
+    const totalSignals = bullishSignals + bearishSignals;
+    if (totalSignals < 3) return 0; // 信号太少不给一致性加权
+
+    const consistency = Math.abs(bullishSignals - bearishSignals) / totalSignals;
+
+    if (consistency > 0.6) {
+      return bullishSignals > bearishSignals ? 5 : -3; // 一致性好时给予加权
+    }
+
+    return 0;
+  }
+
   /**
    * 获取评分等级
    * @param {number} score - 技术分数
