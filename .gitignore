@@ -5,6 +5,7 @@ config/.env
 config/.env.local
 config/.env.production
 config/.env.development
+config/my-etf-positions.json
 *.env
 *.env.*
 

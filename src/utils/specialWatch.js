@@ -7,19 +7,25 @@
 class DynamicWatchDetector {
   constructor() {
     this.enabled = process.env.ENABLE_SPECIAL_WATCH !== 'false';
-    // 动态关注条件的阈值（支持环境变量配置）
+    // 动态关注条件的阈值（智能化配置）
     this.thresholds = {
-      rsi_oversold: Number(process.env.DYNAMIC_RSI_OVERSOLD_THRESHOLD) || 30,
-      rsi_overbought: 70,         // RSI超买阈值
-      volume_spike_ratio: Number(process.env.DYNAMIC_VOLUME_SPIKE_RATIO) || 1.5,
-      technical_score_min: Number(process.env.DYNAMIC_TECHNICAL_SCORE_MIN) || 70,
-      price_change_threshold: Number(process.env.DYNAMIC_PRICE_CHANGE_THRESHOLD) || 3.0,
-      volatility_high: 5.0        // 高波动率阈值(%)
+      rsi_oversold: Number(process.env.DYNAMIC_RSI_OVERSOLD_THRESHOLD) || 25, // 更严格的超卖阈值
+      rsi_overbought: 75,         // 更严格的超买阈值
+      volume_spike_ratio: Number(process.env.DYNAMIC_VOLUME_SPIKE_RATIO) || 2.0, // 提高成交量阈值
+      technical_score_min: Number(process.env.DYNAMIC_TECHNICAL_SCORE_MIN) || 75, // 提高技术评分阈值
+      price_change_threshold: Number(process.env.DYNAMIC_PRICE_CHANGE_THRESHOLD) || 4.0, // 提高价格变动阈值
+      volatility_high: 6.0,       // 提高高波动率阈值
+      consecutive_days: 2,        // 连续天数要求
+      min_confidence: 0.6         // 最小置信度要求
     };
+
+    // 历史记录用于智能过滤
+    this.watchHistory = new Map(); // symbol -> history[]
+    this.performanceTracker = new Map(); // symbol -> performance metrics
   }
 
   /**
-   * 动态检测ETF是否值得特别关注
+   * 动态检测ETF是否值得特别关注（智能化版本）
    * @param {Object} etfData - ETF数据
    * @returns {Object|null} 关注提示信息
    */
@@ -28,26 +34,32 @@ class DynamicWatchDetector {
       return null;
     }
 
+    // 更新历史记录
+    this._updateWatchHistory(etfData);
+
     const triggeredConditions = [];
     let priority = 'low';
     let reason = '市场异常';
+    let confidence = 0;
 
-    // 检查RSI超卖状态 (高优先级)
-    const rsiCondition = this._checkRSIOversold(etfData);
+    // 检查RSI超卖状态 (高优先级) - 增加历史验证
+    const rsiCondition = this._checkRSIOversoldEnhanced(etfData);
     if (rsiCondition.triggered) {
       triggeredConditions.push(rsiCondition);
       priority = 'high';
       reason = 'RSI超卖，可能反弹机会';
+      confidence += 0.3;
     }
 
-    // 检查异常成交量放大 (中优先级)
-    const volumeCondition = this._checkVolumeSpike(etfData);
+    // 检查异常成交量放大 (中优先级) - 增加持续性验证
+    const volumeCondition = this._checkVolumeSpikeEnhanced(etfData);
     if (volumeCondition.triggered) {
       triggeredConditions.push(volumeCondition);
       if (priority === 'low') {
         priority = 'medium';
         reason = '成交量异常放大，资金关注';
       }
+      confidence += 0.2;
     }
 
     // 检查技术评分改善 (中优先级)
@@ -92,22 +104,154 @@ class DynamicWatchDetector {
   }
 
   /**
-   * 检查RSI超卖状态
+   * 检查RSI超卖状态（增强版）
    * @private
    */
-  _checkRSIOversold(etfData) {
+  _checkRSIOversoldEnhanced(etfData) {
     const rsi = etfData.technicalIndicators?.rsi;
+    if (!rsi) return { triggered: false };
 
-    if (rsi && rsi < this.thresholds.rsi_oversold) {
-      return {
-        triggered: true,
-        condition: 'rsi_oversold',
-        message: `RSI超卖 (${rsi.toFixed(1)})`,
-        severity: 'high',
-        value: rsi
-      };
+    // 基础RSI检查
+    if (rsi >= this.thresholds.rsi_oversold) {
+      return { triggered: false };
     }
-    return { triggered: false };
+
+    // 检查历史连续性
+    const history = this.watchHistory.get(etfData.symbol) || [];
+    const recentRSI = history.slice(-3).map(h => h.rsi).filter(r => r !== undefined);
+
+    // 要求连续2天以上RSI低于阈值
+    const consecutiveOversold = recentRSI.filter(r => r < this.thresholds.rsi_oversold).length;
+
+    if (consecutiveOversold < this.thresholds.consecutive_days) {
+      return { triggered: false };
+    }
+
+    // 计算RSI改善趋势
+    const rsiTrend = recentRSI.length >= 2 ?
+      recentRSI[recentRSI.length - 1] - recentRSI[recentRSI.length - 2] : 0;
+
+    const severity = rsi < 20 ? 'high' : rsi < 25 ? 'medium' : 'low';
+    const confidence = this._calculateRSIConfidence(rsi, rsiTrend, consecutiveOversold);
+
+    if (confidence < this.thresholds.min_confidence) {
+      return { triggered: false };
+    }
+
+    return {
+      triggered: true,
+      condition: 'rsi_oversold',
+      message: `RSI超卖 (${rsi.toFixed(1)}, 连续${consecutiveOversold}天)`,
+      severity: severity,
+      value: rsi,
+      confidence: confidence,
+      trend: rsiTrend > 0 ? 'improving' : 'deteriorating'
+    };
+  }
+
+  /**
+   * 检查异常成交量放大（增强版）
+   * @private
+   */
+  _checkVolumeSpikeEnhanced(etfData) {
+    const volumeRatio = etfData.volumeRatio || 1.0;
+    if (volumeRatio < this.thresholds.volume_spike_ratio) {
+      return { triggered: false };
+    }
+
+    // 检查成交量持续性
+    const history = this.watchHistory.get(etfData.symbol) || [];
+    const recentVolumes = history.slice(-3).map(h => h.volumeRatio).filter(v => v !== undefined);
+
+    // 计算平均成交量比率
+    const avgVolumeRatio = recentVolumes.length > 0 ?
+      recentVolumes.reduce((sum, v) => sum + v, 0) / recentVolumes.length : 1.0;
+
+    // 要求平均成交量也要高于正常水平
+    if (avgVolumeRatio < 1.3) {
+      return { triggered: false };
+    }
+
+    const confidence = this._calculateVolumeConfidence(volumeRatio, avgVolumeRatio);
+
+    if (confidence < this.thresholds.min_confidence) {
+      return { triggered: false };
+    }
+
+    return {
+      triggered: true,
+      condition: 'volume_spike',
+      message: `成交量放大 (${(volumeRatio * 100).toFixed(0)}%, 平均${(avgVolumeRatio * 100).toFixed(0)}%)`,
+      severity: volumeRatio > 3.0 ? 'high' : 'medium',
+      value: volumeRatio,
+      confidence: confidence
+    };
+  }
+
+  /**
+   * 更新关注历史记录
+   * @private
+   */
+  _updateWatchHistory(etfData) {
+    const symbol = etfData.symbol;
+    const history = this.watchHistory.get(symbol) || [];
+
+    const record = {
+      timestamp: Date.now(),
+      rsi: etfData.technicalIndicators?.rsi,
+      volumeRatio: etfData.volumeRatio,
+      technicalScore: etfData.technicalScore?.score,
+      price: etfData.current,
+      priceChange: this._calculatePriceChange(etfData)
+    };
+
+    history.push(record);
+
+    // 只保留最近7天的记录
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    const filteredHistory = history.filter(h => h.timestamp > sevenDaysAgo);
+
+    this.watchHistory.set(symbol, filteredHistory);
+  }
+
+  /**
+   * 计算RSI置信度
+   * @private
+   */
+  _calculateRSIConfidence(rsi, rsiTrend, consecutiveDays) {
+    let confidence = 0.5; // 基础置信度
+
+    // RSI越低，置信度越高
+    if (rsi < 15) confidence += 0.3;
+    else if (rsi < 20) confidence += 0.2;
+    else if (rsi < 25) confidence += 0.1;
+
+    // RSI改善趋势加分
+    if (rsiTrend > 0) confidence += 0.1;
+
+    // 连续天数加分
+    confidence += Math.min(consecutiveDays * 0.1, 0.2);
+
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * 计算成交量置信度
+   * @private
+   */
+  _calculateVolumeConfidence(currentRatio, avgRatio) {
+    let confidence = 0.5;
+
+    // 当前成交量比率越高，置信度越高
+    if (currentRatio > 4.0) confidence += 0.3;
+    else if (currentRatio > 3.0) confidence += 0.2;
+    else if (currentRatio > 2.0) confidence += 0.1;
+
+    // 平均成交量比率加分
+    if (avgRatio > 2.0) confidence += 0.2;
+    else if (avgRatio > 1.5) confidence += 0.1;
+
+    return Math.min(confidence, 1.0);
   }
 
   /**

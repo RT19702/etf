@@ -13,6 +13,8 @@ const BacktestEngine = require('./src/utils/backtestEngine');
 const DataSourceManager = require('./src/utils/dataSourceManager');
 const { SpecialWatchManager } = require('./src/utils/specialWatch');
 const HTMLReportGenerator = require('./src/utils/htmlReportGenerator');
+const { RiskManager } = require('./src/utils/riskManager');
+const SmartPortfolioManager = require('./src/utils/smartPortfolioManager');
 
 decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
 
@@ -42,10 +44,54 @@ const dataSourceManager = new DataSourceManager();
 const specialWatchManager = new SpecialWatchManager();
 const htmlReportGenerator = new HTMLReportGenerator();
 
-const limiter = new Bottleneck({
-  minTime: 500,
-  maxConcurrent: 3
+// 初始化增强风险管理器
+const riskManager = new RiskManager({
+  stopLossPercent: Number(process.env.STOP_LOSS_PERCENT) || 0.05,
+  trailingStopPercent: Number(process.env.TRAILING_STOP_PERCENT) || 0.03,
+  takeProfitPercent: Number(process.env.TAKE_PROFIT_PERCENT) || 0.15,
+  timeStopHours: Number(process.env.TIME_STOP_HOURS) || 24,
+  atrMultiplier: Number(process.env.ATR_MULTIPLIER) || 2.0,
+  technicalStopEnabled: process.env.TECHNICAL_STOP_ENABLED !== 'false',
+  maxDailyTrades: Number(process.env.MAX_DAILY_TRADES) || 10,
+  maxTotalPosition: Number(process.env.MAX_TOTAL_POSITION) || 0.8,
+  maxSinglePosition: Number(process.env.MAX_SINGLE_POSITION) || 0.3,
+  volatilityThreshold: Number(process.env.VOLATILITY_THRESHOLD) || 3.0
 });
+
+// 初始化智能持仓管理器
+
+const portfolioManager = new SmartPortfolioManager();
+
+// 批量处理参数支持动态配置
+const batchSize = Math.max(1, Number(process.env.BATCH_SIZE) || 5);
+const limiter = new Bottleneck({
+  minTime: Number(process.env.LIMITER_MIN_TIME) || 500,
+  maxConcurrent: Number(process.env.LIMITER_MAX_CONCURRENT) || 3
+});
+
+// 简单内存缓存（K线和实时价格）
+const cache = {
+  kline: new Map(),
+  price: new Map()
+};
+
+// 通用重试机制
+async function fetchWithRetry(fn, key, type = 'kline', retries = 3, delay = 800) {
+  // 优先查缓存
+  if (type === 'kline' && cache.kline.has(key)) return cache.kline.get(key);
+  if (type === 'price' && cache.price.has(key)) return cache.price.get(key);
+  for (let i = 0; i < retries; i++) {
+    try {
+      const result = await fn();
+      if (type === 'kline') cache.kline.set(key, result);
+      if (type === 'price') cache.price.set(key, result);
+      return result;
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
 
 function financial(num, decimals = 4) {
   return new decimal(num).toDecimalPlaces(decimals).toNumber();
@@ -56,29 +102,38 @@ async function analyzeSymbolEnhanced(etf) {
   try {
     console.log(color(`  🔍 分析 ${etf.name}...`, 'gray'));
     
-    // 使用多数据源获取K线数据
-    const kline = await dataSourceManager.fetchKlineData(etf.symbol, CONFIG.lookbackDays + 10);
-    if (kline.length < CONFIG.lookbackDays) {
+    // 使用多数据源获取K线数据（带缓存和重试）
+    const kline = await fetchWithRetry(
+      () => dataSourceManager.fetchKlineData(etf.symbol, CONFIG.lookbackDays + 10),
+      etf.symbol + '_kline', 'kline', 3, 800
+    );
+    if (!kline || kline.length < CONFIG.lookbackDays) {
       console.log(color(`    ⚠️ ${etf.name} 数据不足`, 'yellow'));
       return null;
     }
-    
+
     const recent = kline.slice(-CONFIG.lookbackDays);
     const prices = recent.map(d => d.close);
     const highs = recent.map(d => d.high);
     const lows = recent.map(d => d.low);
     const volumes = recent.map(d => d.volume);
-    
-    // 基础统计
+
+    // 动态参数调整：根据波动率自动调整窗口
+    let momentumWindow = CONFIG.momentumWindow;
     const { avg, std, ma5, volatility } = calcStat(recent);
-    
-    // 获取实时价格
-    const current = await dataSourceManager.fetchRealTimePrice(etf.symbol);
+    if (volatility > 3) momentumWindow = Math.max(10, Math.floor(momentumWindow * 0.8));
+    if (volatility < 1) momentumWindow = Math.min(30, Math.floor(momentumWindow * 1.2));
+
+    // 获取实时价格（带缓存和重试）
+    const current = await fetchWithRetry(
+      () => dataSourceManager.fetchRealTimePrice(etf.symbol),
+      etf.symbol + '_price', 'price', 3, 800
+    );
     if (!current) {
       console.log(color(`    ❌ ${etf.name} 无法获取实时价格`, 'red'));
       return null;
     }
-    
+
     // 计算技术指标（增强版 - 包含新增指标）
     const technicalIndicators = {
       rsi: TechnicalIndicators.calculateRSI(prices),
@@ -89,34 +144,56 @@ async function analyzeSymbolEnhanced(etf) {
       cci: TechnicalIndicators.calculateCCI(highs, lows, prices),
       atr: TechnicalIndicators.calculateATR(highs, lows, prices),
       volumeRatio: TechnicalIndicators.calculateVolumeRatio(volumes),
-      momentum: TechnicalIndicators.calculateMomentum(prices),
+      momentum: TechnicalIndicators.calculateMomentum(prices, momentumWindow),
       currentPrice: current
     };
-    
-    // 技术分析评分
+
+    // 信号融合：多指标加权
+    const fusionScore = (
+      (technicalIndicators.rsi ? Math.max(0, Math.min(technicalIndicators.rsi, 100)) : 50) * 0.2 +
+      (technicalIndicators.macd && technicalIndicators.macd.macd ? technicalIndicators.macd.macd : 0) * 10 * 0.15 +
+      (technicalIndicators.kdj && technicalIndicators.kdj.k ? technicalIndicators.kdj.k : 50) * 0.15 +
+      (technicalIndicators.momentum ? technicalIndicators.momentum : 0) * 0.1 +
+      (technicalIndicators.bollinger && technicalIndicators.bollinger.width ? technicalIndicators.bollinger.width : 0) * 10 * 0.1 +
+      (technicalIndicators.volumeRatio ? technicalIndicators.volumeRatio : 1) * 10 * 0.1 +
+      (technicalIndicators.atr && technicalIndicators.atr.percentage ? (100 - technicalIndicators.atr.percentage) : 50) * 0.2
+    );
+
+    // 检查是否为实际持仓，如果是则更新持仓价格和监控风险
+    const position = portfolioManager.getPositionBySymbol(etf.symbol);
+    if (position) {
+      portfolioManager.updatePositionPrice(etf.symbol, current, technicalIndicators);
+      const positionSignals = portfolioManager.checkStopLossAndTakeProfit(etf.symbol, technicalIndicators);
+      if (positionSignals && positionSignals.length > 0) {
+        console.log(`🚨 ${etf.symbol} 持仓风险提醒:`, positionSignals.map(s => s.message).join(', '));
+      }
+    }
+
+    // 技术分析评分（融合分数）
     const technicalScore = TechnicalIndicators.getTechnicalScore(technicalIndicators);
-    
+    technicalScore.fusionScore = fusionScore;
+
     // 动态买卖点计算（结合技术指标）
     const kBuy = financial(0.8 - (volatility - 10) * 0.005);
     const kSell = financial(1.0 + (volatility - 10) * 0.005);
-    
+
     const priceDecimals = determinePriceDecimals(current);
     let buy = financial(avg - kBuy * std, priceDecimals);
     let sell = financial(avg + kSell * std, priceDecimals);
-    
+
     // 根据技术指标调整买卖点
     if (technicalIndicators.rsi && technicalIndicators.rsi < 30) {
-      buy = financial(buy * 1.02, priceDecimals); // RSI超卖时提高买入价
+      buy = financial(buy * 1.02, priceDecimals);
     }
     if (technicalIndicators.rsi && technicalIndicators.rsi > 70) {
-      sell = financial(sell * 0.98, priceDecimals); // RSI超买时降低卖出价
+      sell = financial(sell * 0.98, priceDecimals);
     }
-    
+
     if (sell <= buy) sell = financial(buy + avg * CONFIG.minBuySellGap, priceDecimals);
-    
-    // 综合信号生成
-    const signal = generateEnhancedSignal(current, buy, sell, technicalScore, technicalIndicators);
-    
+
+    // 综合信号生成（融合分数参与）
+    const signal = generateEnhancedSignal(current, buy, sell, technicalScore, technicalIndicators, fusionScore);
+
     return {
       ...etf,
       current,
@@ -130,7 +207,7 @@ async function analyzeSymbolEnhanced(etf) {
       kline,
       priceDecimals
     };
-    
+
   } catch (error) {
     console.log(color(`    ❌ ${etf.name} 分析失败: ${error.message}`, 'red'));
     return null;
@@ -142,7 +219,7 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
   let signal = '持有';
   let signalColor = 'green';
   let confidence = '中等';
-  
+
   // 基础价格信号
   if (current < buy) {
     signal = '买入';
@@ -151,9 +228,10 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
     signal = '卖出';
     signalColor = 'red';
   }
-  
-  // 技术指标确认
-  if (technicalScore.score >= 70) {
+
+  // 技术指标融合分数参与
+  const fusion = arguments.length > 5 ? arguments[5] : technicalScore.score;
+  if (fusion >= 75) {
     if (signal === '买入') {
       signal = '强烈买入';
       confidence = '高';
@@ -161,7 +239,7 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
       signal = '弱势买入';
       signalColor = 'blue';
     }
-  } else if (technicalScore.score <= 30) {
+  } else if (fusion <= 25) {
     if (signal === '卖出') {
       signal = '强烈卖出';
       confidence = '高';
@@ -170,7 +248,7 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
       signalColor = 'red';
     }
   }
-  
+
   // MACD确认
   if (indicators.macd && indicators.macd.macd > indicators.macd.signal) {
     if (signal.includes('卖出')) {
@@ -179,12 +257,13 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
       confidence = '低';
     }
   }
-  
+
   return {
     text: color(signal, signalColor),
     level: signal,
     confidence,
     score: technicalScore.score,
+    fusionScore: fusion,
     signals: technicalScore.signals
   };
 }
@@ -307,6 +386,81 @@ function generateEnhancedReport(strategies, stats) {
       卖出: stats.filter(s => s.signal?.level?.includes('卖出')).length,
       信号矛盾: stats.filter(s => s.signal?.level?.includes('矛盾')).length
     },
+    riskManagement: {
+      配置: {
+        固定止损: `${(riskManager.config.stopLossPercent * 100).toFixed(1)}%`,
+        追踪止损: `${(riskManager.config.trailingStopPercent * 100).toFixed(1)}%`,
+        止盈目标: `${(riskManager.config.takeProfitPercent * 100).toFixed(1)}%`,
+        时间止损: `${riskManager.config.timeStopHours}小时`,
+        ATR倍数: riskManager.config.atrMultiplier,
+        技术止损: riskManager.config.technicalStopEnabled ? '启用' : '禁用'
+      },
+      统计: riskManager.getRiskMetrics(),
+      当前持仓: Array.from(riskManager.positions.values()).map(pos => ({
+        标的: pos.symbol,
+        入场价: pos.entryPrice,
+        当前止损: pos.currentStopLoss,
+        止损类型: pos.stopLossType,
+        止盈价: pos.takeProfit
+      }))
+    },
+    // 我的实际持仓信息
+    myPortfolio: {
+      summary: {
+        总持仓数: portfolioManager.positions.length,
+        配置文件: 'config/my-etf-positions.json',
+        最后更新: new Date().toISOString().split('T')[0]
+      },
+      positions: portfolioManager.positions.map(pos => {
+        // 获取当前价格（从ETF分析结果中查找）
+        const etfData = stats.find(s => s.symbol === pos.symbol);
+        const currentPrice = etfData ? etfData.current : pos.costPrice;
+
+        // 计算智能止盈止损
+        const smartLevels = portfolioManager.calculateSmartStopLossAndTakeProfit(
+          pos.costPrice, currentPrice, etfData ? etfData.technicalIndicators : {}, 'medium'
+        );
+
+        // 计算止损距离和风险等级
+        const stopLossDistance = smartLevels.stopLoss.recommended ?
+          (((currentPrice - smartLevels.stopLoss.recommended) / currentPrice) * 100).toFixed(1) : 'N/A';
+        const takeProfitDistance = smartLevels.takeProfit.recommended ?
+          (((smartLevels.takeProfit.recommended - currentPrice) / currentPrice) * 100).toFixed(1) : 'N/A';
+
+        // 风险等级评估
+        let riskLevel = '中等风险';
+        if (stopLossDistance !== 'N/A') {
+          const stopDistance = parseFloat(stopLossDistance);
+          if (stopDistance < 1) riskLevel = '极高风险';
+          else if (stopDistance < 2) riskLevel = '高风险';
+          else if (stopDistance < 3) riskLevel = '中高风险';
+          else if (stopDistance > 5) riskLevel = '低风险';
+        }
+
+        return {
+          ETF名称: etfData ? etfData.name : pos.symbol,
+          代码: pos.symbol,
+          持有数量: pos.quantity,
+          成本价: pos.costPrice,
+          当前价: currentPrice,
+          投资金额: (pos.quantity * pos.costPrice).toFixed(2),
+          当前市值: (pos.quantity * currentPrice).toFixed(2),
+          盈亏金额: ((currentPrice - pos.costPrice) * pos.quantity).toFixed(2),
+          盈亏比例: (((currentPrice - pos.costPrice) / pos.costPrice) * 100).toFixed(2) + '%',
+          购买日期: pos.purchaseDate,
+          持有天数: Math.floor((new Date() - new Date(pos.purchaseDate)) / (1000 * 60 * 60 * 24)),
+          // 止盈止损信息
+          止损价格: smartLevels.stopLoss.recommended ? smartLevels.stopLoss.recommended.toFixed(4) : 'N/A',
+          止损类型: smartLevels.stopLoss.type || 'fixed',
+          止损距离: stopLossDistance + '%',
+          止盈价格: smartLevels.takeProfit.recommended ? smartLevels.takeProfit.recommended.toFixed(4) : 'N/A',
+          止盈距离: takeProfitDistance + '%',
+          风险等级: riskLevel,
+          止损依据: smartLevels.explanation ? smartLevels.explanation.stopLossReason : '基于成本价5%固定止损',
+          止盈依据: smartLevels.explanation ? smartLevels.explanation.takeProfitReason : '基于成本价15%目标止盈'
+        };
+      })
+    },
     data: stats.map(s => ({
       ETF: s.name,
       代码: s.symbol,
@@ -394,20 +548,31 @@ function getDataSourceName(sourceKey) {
 function formatEnhancedWeChatReport(report) {
   let content = `# 📊 ETF轮动策略\n\n`;
   content += `**报告时间**: ${report.date}\n\n`;
-  
-  // 核心推荐
+  // 核心推荐（美化）
   content += `## 🎯 策略推荐\n`;
-  content += `- **推荐操作**: ${report.summary.推荐操作}\n`;
-  content += `- **推荐标的**: ${report.summary.推荐标的}\n`;
-  content += `- **市场趋势**: ${report.summary.市场趋势}\n\n`;
-  
-  // 技术分析统计
+  content += `- **推荐操作**: <font color="${report.summary.推荐操作.includes('买入') ? 'blue' : report.summary.推荐操作.includes('卖出') ? 'red' : 'black'}">${report.summary.推荐操作}</font>\n`;
+  content += `- **推荐标的**: <font color="green">${report.summary.推荐标的}</font>\n`;
+  content += `- **市场趋势**: <font color="orange">${report.summary.市场趋势}</font>\n\n`;
+  // 技术分析统计（美化）
   content += `## 📈 技术分析统计\n`;
-  content += `- 🔵 强烈买入: ${report.technicalAnalysis.强烈买入}个\n`;
-  content += `- 🟦 买入: ${report.technicalAnalysis.买入}个\n`;
-  content += `- 🟢 持有: ${report.technicalAnalysis.持有}个\n`;
-  content += `- 🟠 卖出: ${report.technicalAnalysis.卖出}个\n`;
-  content += `- ⚠️ 信号矛盾: ${report.technicalAnalysis.信号矛盾}个\n\n`;
+  content += `**交易信号分布**:\n`;
+  content += `- 🔥 <font color="blue">强烈买入: ${report.technicalAnalysis.强烈买入}个</font> | 📈 买入: ${report.technicalAnalysis.买入}个\n`;
+  content += `- 🔒 持有: ${report.technicalAnalysis.持有}个 | <font color="red">📉 卖出: ${report.technicalAnalysis.卖出}个</font>\n`;
+  content += `- ⚠️ <font color="orange">信号矛盾: ${report.technicalAnalysis.信号矛盾}个</font>\n\n`;
+
+  // 技术指标统计
+  const totalETFs = report.data.length;
+  const rsiOversold = report.data.filter(d => parseFloat(d.RSI) < 30).length;
+  const rsiOverbought = report.data.filter(d => parseFloat(d.RSI) > 70).length;
+  const kdjOversold = report.data.filter(d => d.KDJ信号 && d.KDJ信号.includes('超卖')).length;
+  const kdjOverbought = report.data.filter(d => d.KDJ信号 && d.KDJ信号.includes('超买')).length;
+  const williamsOversold = report.data.filter(d => d.威廉信号 && d.威廉信号.includes('超卖')).length;
+  const cciOversold = report.data.filter(d => d.CCI信号 && d.CCI信号.includes('超卖')).length;
+
+  content += `**技术指标统计** (共${totalETFs}个ETF):\n`;
+  content += `- RSI: 超卖${rsiOversold}个 | 超买${rsiOverbought}个\n`;
+  content += `- KDJ: 超卖${kdjOversold}个 | 超买${kdjOverbought}个\n`;
+  content += `- 威廉: 超卖${williamsOversold}个 | CCI超卖: ${cciOversold}个\n\n`;
   
   // 重点关注 - 强烈买入机会
   const strongBuys = report.data.filter(d => d.交易信号.includes('强烈买入'));
@@ -415,12 +580,12 @@ function formatEnhancedWeChatReport(report) {
     content += `## 💡 强烈买入机会\n`;
     strongBuys.forEach(etf => {
       content += `- **${etf.ETF}** (${etf.代码}): ¥${etf.当前价格}\n`;
-      content += `  - 技术评分: ${etf.技术评分}/100\n`;
-      content += `  - RSI: ${etf.RSI}\n`;
-      content += `  - MACD: ${etf.MACD}\n`;
-      content += `  - 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
-      content += `  - 价格偏离: ${etf.价格偏离}\n`;
-      content += `  - 风险等级: ${etf.风险等级}\n`;
+      content += `  - 📊 技术评分: ${etf.技术评分}/100 (${etf.信号强度})\n`;
+      content += `  - 📈 基础指标: RSI=${etf.RSI} | MACD=${etf.MACD}\n`;
+      content += `  - 🔍 新增指标: KDJ(${etf.KDJ_K},${etf.KDJ_D},${etf.KDJ_J}) | 威廉=${etf.威廉指标}\n`;
+      content += `  - 📉 CCI=${etf.CCI} | ATR=${etf.ATR百分比}%\n`;
+      content += `  - 💰 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
+      content += `  - 📊 价格偏离: ${etf.价格偏离} | 风险等级: ${etf.风险等级}\n`;
     });
     content += `\n`;
   }
@@ -429,12 +594,12 @@ function formatEnhancedWeChatReport(report) {
   const normalBuys = report.data.filter(d => d.交易信号.includes('买入') && !d.交易信号.includes('强烈买入'));
   if (normalBuys.length > 0) {
     content += `## 📈 买入机会\n`;
-    normalBuys.slice(0, 5).forEach(etf => { // 最多显示5个
+    normalBuys.slice(0, 3).forEach(etf => { // 最多显示3个，避免消息过长
       content += `- **${etf.ETF}** (${etf.代码}): ¥${etf.当前价格}\n`;
-      content += `  - 技术评分: ${etf.技术评分}/100\n`;
-      content += `  - 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
-      content += `  - 价格偏离: ${etf.价格偏离}\n`;
-      content += `  - 风险等级: ${etf.风险等级}\n`;
+      content += `  - 📊 技术评分: ${etf.技术评分}/100 | RSI: ${etf.RSI}\n`;
+      content += `  - 🔍 KDJ信号: ${etf.KDJ信号} | 威廉信号: ${etf.威廉信号}\n`;
+      content += `  - 💰 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
+      content += `  - 📊 价格偏离: ${etf.价格偏离} | 风险等级: ${etf.风险等级}\n`;
     });
     content += `\n`;
   }
@@ -444,14 +609,63 @@ function formatEnhancedWeChatReport(report) {
     content += specialWatchManager.formatAlertsText(report.specialWatchAlerts);
   }
 
+  // 我的实际持仓状态
+  if (report.myPortfolio && report.myPortfolio.positions.length > 0) {
+    content += `## 💼 我的持仓状态\n`;
+    const portfolio = report.myPortfolio;
+
+    // 计算总投资和总市值
+    const totalInvestment = portfolio.positions.reduce((sum, pos) => sum + parseFloat(pos.投资金额), 0);
+    const totalCurrentValue = portfolio.positions.reduce((sum, pos) => sum + parseFloat(pos.当前市值), 0);
+    const totalPnL = totalCurrentValue - totalInvestment;
+    const totalPnLPercent = totalInvestment > 0 ? ((totalPnL / totalInvestment) * 100).toFixed(2) : '0.00';
+
+    content += `**持仓概览**:\n`;
+    content += `- 总投资: ¥${totalInvestment.toFixed(2)} | 当前市值: ¥${totalCurrentValue.toFixed(2)}\n`;
+    content += `- 总盈亏: ¥${totalPnL.toFixed(2)} (${totalPnLPercent}%) | 持仓数: ${portfolio.summary.总持仓数}个\n\n`;
+
+    content += `**持仓详情**:\n`;
+    portfolio.positions.forEach(pos => {
+      const pnlIcon = parseFloat(pos.盈亏比例) >= 0 ? '📈' : '📉';
+      const riskIcon = pos.风险等级.includes('高风险') ? '🔴' :
+                      pos.风险等级.includes('中') ? '🟡' : '🟢';
+
+      content += `- ${pnlIcon} **${pos.ETF名称}** (${pos.代码})\n`;
+      content += `  - 持仓: ${pos.持有数量}股 | 成本: ¥${pos.成本价} | 现价: ¥${pos.当前价}\n`;
+      content += `  - 盈亏: ¥${pos.盈亏金额} (${pos.盈亏比例}) | ${riskIcon} ${pos.风险等级}\n`;
+
+      // 止损信息
+      if (pos.止损价格 !== 'N/A') {
+        content += `  - 🛡️ 止损: ¥${pos.止损价格}(${pos.止损类型}) | 距离: ${pos.止损距离}\n`;
+      }
+
+      // 止盈信息
+      if (pos.止盈价格 !== 'N/A') {
+        content += `  - 🎯 止盈: ¥${pos.止盈价格} | 距离: ${pos.止盈距离}\n`;
+      }
+
+      content += `  - 📅 持有: ${pos.持有天数}天 (${pos.购买日期})\n`;
+    });
+    content += `\n`;
+  }
+
+
+
+  // 技术指标说明
+  content += `## 📊 技术指标说明\n`;
+  content += `- **KDJ**: 随机指标，判断超买超卖\n`;
+  content += `- **威廉指标**: %R指标，反向超买超卖信号\n`;
+  content += `- **CCI**: 顺势指标，判断价格趋势强度\n`;
+  content += `- **ATR**: 真实波动幅度，衡量市场波动性\n\n`;
+
   // 数据源状态
   content += `## 🔗 数据源状态\n`;
   const currentSourceName = getDataSourceName(report.dataSourceStatus.currentSource);
   content += `当前数据源: ${currentSourceName}\n\n`;
-  
+
   content += `---\n`;
-  content += `*增强版报告 - 集成技术指标分析*`;
-  
+  content += `*增强版报告 v2.0 - 集成动态止损与多维技术指标*`;
+
   return content;
 }
 
@@ -530,6 +744,27 @@ async function runEnhancedStrategy() {
     console.log(color(`持有: ${report.technicalAnalysis.持有}`, 'green'));
     console.log(color(`卖出: ${report.technicalAnalysis.卖出}`, 'red'));
     console.log(color(`信号矛盾: ${report.technicalAnalysis.信号矛盾}`, 'yellow'));
+    console.log('');
+
+    // 风险管理状态
+    console.log(color('=== 风险管理状态 ===', 'bold'));
+    const riskMetrics = riskManager.getRiskMetrics();
+    console.log(color(`当前持仓数: ${riskMetrics.currentPositions}`, 'blue'));
+    console.log(color(`总交易次数: ${riskMetrics.totalTrades}`, 'blue'));
+    console.log(color(`今日交易次数: ${riskMetrics.dailyTrades}`, 'blue'));
+    console.log(color(`胜率: ${riskMetrics.winRate.toFixed(1)}%`, 'green'));
+    console.log(color(`最大回撤: ${riskMetrics.maxDrawdown.toFixed(2)}%`, 'yellow'));
+
+    // 检查系统性风险
+    const systemicWarnings = riskManager.checkSystemicRisk();
+    if (systemicWarnings.length > 0) {
+      console.log(color('⚠️ 风险警告:', 'yellow'));
+      systemicWarnings.forEach(warning => {
+        console.log(color(`  - ${warning}`, 'yellow'));
+      });
+    } else {
+      console.log(color('✅ 风险状态正常', 'green'));
+    }
     console.log('');
 
     // 显示前5个ETF的详细信息

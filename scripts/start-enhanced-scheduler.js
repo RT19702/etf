@@ -34,11 +34,56 @@ console.log(color('  📋 每日报告: 工作日 18:00', 'gray'));
 console.log(color('  📊 周报: 每周五 19:00', 'gray'));
 console.log('');
 
+// ====== AUTO智能推送功能 ======
+const AUTO_INTERVAL_MINUTES = Number(process.env.AUTO_INTERVAL_MINUTES) || 5; // 推送间隔（分钟）
+const AUTO_FLOAT_THRESHOLD = Number(process.env.AUTO_FLOAT_THRESHOLD) || 0.5; // 浮动阈值（%）
+let lastBuySignals = {};
+
+async function checkAndPushBuyOpportunities(forcePush = false) {
+  try {
+    // 获取最新分析报告（假设ETFScheduler有getLatestReport方法，或可直接调用分析逻辑）
+    const report = await (typeof scheduler.getLatestReport === 'function' ? scheduler.getLatestReport() : scheduler.analyzeNow());
+    if (!report || !report.data) return;
+    const buySignals = report.data.filter(d => d.交易信号 && d.交易信号.includes('买入'));
+    let toPush = [];
+    buySignals.forEach(signal => {
+      const last = lastBuySignals[signal.代码];
+      const priceFloat = last ? Math.abs(signal.当前价格 - last.当前价格) / last.当前价格 * 100 : 100;
+      if (forcePush || !last || priceFloat > AUTO_FLOAT_THRESHOLD) {
+        toPush.push(signal);
+        lastBuySignals[signal.代码] = signal;
+      }
+    });
+    if (toPush.length > 0) {
+      // 推送企业微信（假设scheduler有sendWeChatNotification或可直接调用主策略推送函数）
+      if (typeof scheduler.sendWeChatNotification === 'function') {
+        await scheduler.sendWeChatNotification({ ...report, data: toPush });
+      } else if (typeof sendWeChatNotification === 'function') {
+        await sendWeChatNotification({ ...report, data: toPush });
+      }
+      console.log(color(`✅ 已推送${toPush.length}个买入机会到企业微信`, 'green'));
+    } else {
+      console.log(color('ℹ️ 无新买入机会，无需推送', 'gray'));
+    }
+  } catch (err) {
+    console.error(color(`❌ 自动推送失败: ${err.message}`, 'red'));
+  }
+}
+
 async function startEnhancedScheduler() {
   try {
     // 创建调度器实例并传入配置
     const scheduler = new ETFScheduler(CONFIG);
     await scheduler.start();
+
+    // AUTO模式：首次立即推送，后续定时检查
+    if (process.env.ENABLE_AUTO_PUSH === 'true') {
+      console.log(color('🚦 AUTO智能推送模式已开启', 'yellow'));
+      await checkAndPushBuyOpportunities(true); // 首次立即推送
+      setInterval(() => {
+        checkAndPushBuyOpportunities(false);
+      }, AUTO_INTERVAL_MINUTES * 60 * 1000);
+    }
 
     // 保持进程运行
     process.on('SIGINT', () => {
