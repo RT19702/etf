@@ -15,6 +15,7 @@ const { SpecialWatchManager } = require('./src/utils/specialWatch');
 const HTMLReportGenerator = require('./src/utils/htmlReportGenerator');
 const { RiskManager } = require('./src/utils/riskManager');
 const SmartPortfolioManager = require('./src/utils/smartPortfolioManager');
+const PushManager = require('./src/utils/pushManager');
 
 decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
 
@@ -404,63 +405,6 @@ function generateEnhancedReport(strategies, stats) {
         止盈价: pos.takeProfit
       }))
     },
-    // 我的实际持仓信息
-    myPortfolio: {
-      summary: {
-        总持仓数: portfolioManager.positions.length,
-        配置文件: 'config/my-etf-positions.json',
-        最后更新: new Date().toISOString().split('T')[0]
-      },
-      positions: portfolioManager.positions.map(pos => {
-        // 获取当前价格（从ETF分析结果中查找）
-        const etfData = stats.find(s => s.symbol === pos.symbol);
-        const currentPrice = etfData ? etfData.current : pos.costPrice;
-
-        // 计算智能止盈止损
-        const smartLevels = portfolioManager.calculateSmartStopLossAndTakeProfit(
-          pos.costPrice, currentPrice, etfData ? etfData.technicalIndicators : {}, 'medium'
-        );
-
-        // 计算止损距离和风险等级
-        const stopLossDistance = smartLevels.stopLoss.recommended ?
-          (((currentPrice - smartLevels.stopLoss.recommended) / currentPrice) * 100).toFixed(1) : 'N/A';
-        const takeProfitDistance = smartLevels.takeProfit.recommended ?
-          (((smartLevels.takeProfit.recommended - currentPrice) / currentPrice) * 100).toFixed(1) : 'N/A';
-
-        // 风险等级评估
-        let riskLevel = '中等风险';
-        if (stopLossDistance !== 'N/A') {
-          const stopDistance = parseFloat(stopLossDistance);
-          if (stopDistance < 1) riskLevel = '极高风险';
-          else if (stopDistance < 2) riskLevel = '高风险';
-          else if (stopDistance < 3) riskLevel = '中高风险';
-          else if (stopDistance > 5) riskLevel = '低风险';
-        }
-
-        return {
-          ETF名称: etfData ? etfData.name : pos.symbol,
-          代码: pos.symbol,
-          持有数量: pos.quantity,
-          成本价: pos.costPrice,
-          当前价: currentPrice,
-          投资金额: (pos.quantity * pos.costPrice).toFixed(2),
-          当前市值: (pos.quantity * currentPrice).toFixed(2),
-          盈亏金额: ((currentPrice - pos.costPrice) * pos.quantity).toFixed(2),
-          盈亏比例: (((currentPrice - pos.costPrice) / pos.costPrice) * 100).toFixed(2) + '%',
-          购买日期: pos.purchaseDate,
-          持有天数: Math.floor((new Date() - new Date(pos.purchaseDate)) / (1000 * 60 * 60 * 24)),
-          // 止盈止损信息
-          止损价格: smartLevels.stopLoss.recommended ? smartLevels.stopLoss.recommended.toFixed(4) : 'N/A',
-          止损类型: smartLevels.stopLoss.type || 'fixed',
-          止损距离: stopLossDistance + '%',
-          止盈价格: smartLevels.takeProfit.recommended ? smartLevels.takeProfit.recommended.toFixed(4) : 'N/A',
-          止盈距离: takeProfitDistance + '%',
-          风险等级: riskLevel,
-          止损依据: smartLevels.explanation ? smartLevels.explanation.stopLossReason : '基于成本价5%固定止损',
-          止盈依据: smartLevels.explanation ? smartLevels.explanation.takeProfitReason : '基于成本价15%目标止盈'
-        };
-      })
-    },
     data: stats.map(s => ({
       ETF: s.name,
       代码: s.symbol,
@@ -510,8 +454,6 @@ async function sendWeChatNotification(report) {
       console.log(color('📱 企业微信推送未启用或未配置', 'gray'));
       return;
     }
-
-    console.log(color('📱 正在推送增强报告到企业微信...', 'yellow'));
 
     const wechatBot = new WeChatBot(process.env.WECHAT_WEBHOOK_URL, {
       retryCount: Number(process.env.WECHAT_RETRY_COUNT) || 3,
@@ -609,63 +551,6 @@ function formatEnhancedWeChatReport(report) {
     content += specialWatchManager.formatAlertsText(report.specialWatchAlerts);
   }
 
-  // 我的实际持仓状态
-  if (report.myPortfolio && report.myPortfolio.positions.length > 0) {
-    content += `## 💼 我的持仓状态\n`;
-    const portfolio = report.myPortfolio;
-
-    // 计算总投资和总市值
-    const totalInvestment = portfolio.positions.reduce((sum, pos) => sum + parseFloat(pos.投资金额), 0);
-    const totalCurrentValue = portfolio.positions.reduce((sum, pos) => sum + parseFloat(pos.当前市值), 0);
-    const totalPnL = totalCurrentValue - totalInvestment;
-    const totalPnLPercent = totalInvestment > 0 ? ((totalPnL / totalInvestment) * 100).toFixed(2) : '0.00';
-
-    content += `**持仓概览**:\n`;
-    content += `- 总投资: ¥${totalInvestment.toFixed(2)} | 当前市值: ¥${totalCurrentValue.toFixed(2)}\n`;
-    content += `- 总盈亏: ¥${totalPnL.toFixed(2)} (${totalPnLPercent}%) | 持仓数: ${portfolio.summary.总持仓数}个\n\n`;
-
-    content += `**持仓详情**:\n`;
-    portfolio.positions.forEach(pos => {
-      const pnlIcon = parseFloat(pos.盈亏比例) >= 0 ? '📈' : '📉';
-      const riskIcon = pos.风险等级.includes('高风险') ? '🔴' :
-                      pos.风险等级.includes('中') ? '🟡' : '🟢';
-
-      content += `- ${pnlIcon} **${pos.ETF名称}** (${pos.代码})\n`;
-      content += `  - 持仓: ${pos.持有数量}股 | 成本: ¥${pos.成本价} | 现价: ¥${pos.当前价}\n`;
-      content += `  - 盈亏: ¥${pos.盈亏金额} (${pos.盈亏比例}) | ${riskIcon} ${pos.风险等级}\n`;
-
-      // 止损信息
-      if (pos.止损价格 !== 'N/A') {
-        content += `  - 🛡️ 止损: ¥${pos.止损价格}(${pos.止损类型}) | 距离: ${pos.止损距离}\n`;
-      }
-
-      // 止盈信息
-      if (pos.止盈价格 !== 'N/A') {
-        content += `  - 🎯 止盈: ¥${pos.止盈价格} | 距离: ${pos.止盈距离}\n`;
-      }
-
-      content += `  - 📅 持有: ${pos.持有天数}天 (${pos.购买日期})\n`;
-    });
-    content += `\n`;
-  }
-
-
-
-  // 技术指标说明
-  content += `## 📊 技术指标说明\n`;
-  content += `- **KDJ**: 随机指标，判断超买超卖\n`;
-  content += `- **威廉指标**: %R指标，反向超买超卖信号\n`;
-  content += `- **CCI**: 顺势指标，判断价格趋势强度\n`;
-  content += `- **ATR**: 真实波动幅度，衡量市场波动性\n\n`;
-
-  // 数据源状态
-  content += `## 🔗 数据源状态\n`;
-  const currentSourceName = getDataSourceName(report.dataSourceStatus.currentSource);
-  content += `当前数据源: ${currentSourceName}\n\n`;
-
-  content += `---\n`;
-  content += `*增强版报告 v2.0 - 集成动态止损与多维技术指标*`;
-
   return content;
 }
 
@@ -746,14 +631,14 @@ async function runEnhancedStrategy() {
     console.log(color(`信号矛盾: ${report.technicalAnalysis.信号矛盾}`, 'yellow'));
     console.log('');
 
-    // 风险管理状态
+    /* // 风险管理状态
     console.log(color('=== 风险管理状态 ===', 'bold'));
     const riskMetrics = riskManager.getRiskMetrics();
     console.log(color(`当前持仓数: ${riskMetrics.currentPositions}`, 'blue'));
     console.log(color(`总交易次数: ${riskMetrics.totalTrades}`, 'blue'));
     console.log(color(`今日交易次数: ${riskMetrics.dailyTrades}`, 'blue'));
     console.log(color(`胜率: ${riskMetrics.winRate.toFixed(1)}%`, 'green'));
-    console.log(color(`最大回撤: ${riskMetrics.maxDrawdown.toFixed(2)}%`, 'yellow'));
+    console.log(color(`最大回撤: ${riskMetrics.maxDrawdown.toFixed(2)}%`, 'yellow')); */
 
     // 检查系统性风险
     const systemicWarnings = riskManager.checkSystemicRisk();
@@ -765,26 +650,6 @@ async function runEnhancedStrategy() {
     } else {
       console.log(color('✅ 风险状态正常', 'green'));
     }
-    console.log('');
-
-    // 显示前5个ETF的详细信息
-    console.log(color('=== 详细分析（前5个ETF）===', 'bold'));
-    results.slice(0, 5).forEach(etf => {
-      console.log(color(`📊 ${etf.name} (${etf.symbol})`, 'bold'));
-      console.log(`  当前价格: ¥${etf.current.toFixed(etf.priceDecimals)}`);
-      console.log(`  交易信号: ${etf.signal.text}`);
-      console.log(`  技术评分: ${etf.technicalScore?.score?.toFixed(0) || 'N/A'}/100`);
-      console.log(`  RSI: ${etf.technicalIndicators?.rsi?.toFixed(2) || 'N/A'}`);
-      console.log(`  波动率: ${etf.volatility}`);
-      console.log('');
-    });
-
-    // 数据源状态
-    console.log(color('=== 数据源状态 ===', 'bold'));
-    const dsStatus = dataSourceManager.getStatus();
-    console.log(`当前数据源: ${dsStatus.currentSource}`);
-    console.log(`可用数据源: ${dsStatus.sources.filter(s => s.status === 'active').length}个`);
-    console.log('');
 
     // 生成JSON报告
     const jsonReportPath = './data/reports/enhanced_etf_report.json';
@@ -799,12 +664,12 @@ async function runEnhancedStrategy() {
       console.error(color(`❌ HTML报告生成失败: ${error.message}`, 'red'));
     }
 
-    // 企业微信推送
-    await sendWeChatNotification(report);
-
-    console.log(color('✅ 增强版策略执行完成！', 'green'));
-    console.log(color(`📄 JSON报告: ./data/reports/enhanced_etf_report.json`, 'gray'));
-    console.log(color(`🌐 HTML报告: ./data/reports/etf_report.html`, 'gray'));
+    // 企业微信推送（仅在直接运行时推送，调度器调用时跳过以避免重复）
+    if (require.main === module) {
+      await sendWeChatNotification(report);
+    } else {
+      console.log(color('📱 跳过企业微信推送（由调度器统一处理）', 'gray'));
+    }
 
     return report;
 

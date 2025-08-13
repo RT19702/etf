@@ -178,8 +178,10 @@ class ETFScheduler {
         // 动态导入主策略模块并执行
         const report = await this._runMainStrategy();
 
-        // 注意：增强版策略内部已包含企业微信推送，这里不需要重复发送
-        // 只在策略执行失败时发送错误通知
+        // 执行企业微信推送（增强版策略已跳过内部推送）
+        if (report && this.wechatBot) {
+          await this._sendWeChatNotification(report, taskName);
+        }
 
         this._log(`${taskName} 执行成功`);
         return report;
@@ -438,7 +440,6 @@ class ETFScheduler {
       const report = await runEnhancedStrategy();
 
       if (report) {
-        console.log('✅ 增强版策略执行成功');
         return report;
       } else {
         throw new Error('增强版策略执行返回空结果');
