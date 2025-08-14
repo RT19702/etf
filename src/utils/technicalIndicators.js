@@ -389,7 +389,9 @@ class TechnicalIndicators {
    * @param {Object} marketContext - 市场环境上下文
    */
   static getTechnicalScore(indicators, marketContext = {}) {
-    let score = 50; // 中性分数
+    const decimal = require('decimal.js');
+
+    let score = new decimal(50); // 中性分数，使用decimal处理精度
     let signals = [];
 
     // 根据市场环境动态调整权重
@@ -399,70 +401,73 @@ class TechnicalIndicators {
     // RSI评分 (动态权重)
     if (indicators.rsi) {
       const rsiScore = this.calculateRSIScore(indicators.rsi, thresholds.rsi);
-      score += rsiScore.score * weights.rsi;
+      score = score.plus(new decimal(rsiScore.score).times(weights.rsi));
       if (rsiScore.signal) signals.push(rsiScore.signal);
     }
 
     // MACD评分 (动态权重)
     if (indicators.macd) {
       const macdScore = this.calculateMACDScore(indicators.macd);
-      score += macdScore.score * weights.macd;
+      score = score.plus(new decimal(macdScore.score).times(weights.macd));
       if (macdScore.signal) signals.push(macdScore.signal);
     }
 
     // 布林带评分 (动态权重)
     if (indicators.bollinger) {
       const bbScore = this.calculateBollingerScore(indicators.currentPrice, indicators.bollinger);
-      score += bbScore.score * weights.bollinger;
+      score = score.plus(new decimal(bbScore.score).times(weights.bollinger));
       if (bbScore.signal) signals.push(bbScore.signal);
     }
 
     // KDJ评分 (动态权重)
     if (indicators.kdj) {
       const kdjScore = this.calculateKDJScore(indicators.kdj, thresholds.kdj);
-      score += kdjScore.score * weights.kdj;
+      score = score.plus(new decimal(kdjScore.score).times(weights.kdj));
       if (kdjScore.signal) signals.push(kdjScore.signal);
     }
 
     // 威廉指标评分 (动态权重)
     if (indicators.williamsR) {
       const wrScore = this.calculateWilliamsScore(indicators.williamsR, thresholds.williams);
-      score += wrScore.score * weights.williams;
+      score = score.plus(new decimal(wrScore.score).times(weights.williams));
       if (wrScore.signal) signals.push(wrScore.signal);
     }
 
     // CCI评分 (动态权重)
     if (indicators.cci) {
       const cciScore = this.calculateCCIScore(indicators.cci, thresholds.cci);
-      score += cciScore.score * weights.cci;
+      score = score.plus(new decimal(cciScore.score).times(weights.cci));
       if (cciScore.signal) signals.push(cciScore.signal);
     }
 
     // 成交量评分 (动态权重)
     const volumeScore = this.calculateVolumeScore(indicators.volumeRatio, thresholds.volume);
-    score += volumeScore.score * weights.volume;
+    score = score.plus(new decimal(volumeScore.score).times(weights.volume));
     if (volumeScore.signal) signals.push(volumeScore.signal);
 
     // 动量评分 (动态权重)
     const momentumScore = this.calculateMomentumScore(indicators.momentum, thresholds.momentum);
-    score += momentumScore.score * weights.momentum;
+    score = score.plus(new decimal(momentumScore.score).times(weights.momentum));
     if (momentumScore.signal) signals.push(momentumScore.signal);
 
     // ATR波动率调整 (动态权重)
     if (indicators.atr) {
       const atrScore = this.calculateATRScore(indicators.atr, thresholds.atr);
-      score += atrScore.score * weights.atr;
+      score = score.plus(new decimal(atrScore.score).times(weights.atr));
       if (atrScore.signal) signals.push(atrScore.signal);
     }
 
     // 指标一致性加权
     const consistencyBonus = this.calculateConsistencyBonus(signals);
-    score += consistencyBonus;
+    score = score.plus(new decimal(consistencyBonus));
+
+    // 确保分数在0-100范围内，并转换为数值
+    const finalScore = Math.max(0, Math.min(100, score.toNumber()));
 
     return {
-      score: Math.max(0, Math.min(100, score)),
+      score: finalScore,
       signals: signals,
-      level: this.getScoreLevel(score),
+      level: this.getScoreLevel(finalScore),
       consistency: consistencyBonus,
       weights: weights
     };

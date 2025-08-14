@@ -192,20 +192,33 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
     const pushContent = formatSimplePushContent(toPush);
     console.log(color(`📝 准备推送${toPush.length}个信号`, 'blue'));
 
-    // 频控与类型判断
-    const canPush = pushManager.canPush('wechat', 'normal', now);
-    if (!canPush.allow) {
-      console.log(color(`🚫 频率控制阻止推送: ${canPush.reason}`, 'yellow'));
-      return;
-    }
-    console.log(color('✅ 频率控制检查通过', 'green'));
+    // 智能推送决策
+    const signals = toPush.map(s => s.交易信号 || s.signal || '');
+    const priceChanges = toPush.map(s => {
+      const last = lastBuySignals[s.代码];
+      if (!last) return 5; // 新信号默认5%变动
+      const currentPrice = parseFloat(s.当前价格);
+      const lastPrice = parseFloat(last.当前价格);
+      return Math.abs(currentPrice - lastPrice) / lastPrice * 100;
+    });
+    const technicalScores = toPush.map(s => parseFloat(s.技术评分) || 50);
 
-    // 内容去重
-    if (pushManager.isDuplicateContent(pushContent, now)) {
-      console.log(color('🚫 内容去重阻止推送: 内容重复', 'yellow'));
+    const pushDecision = pushManager.smartPushDecision({
+      content: pushContent,
+      type: 'wechat',
+      priority: 'normal',
+      signals,
+      priceChanges,
+      technicalScores,
+      now
+    });
+
+    if (!pushDecision.shouldPush) {
+      console.log(color(`🚫 智能推送决策阻止推送: ${pushDecision.reason}`, 'yellow'));
+      console.log(color(`📊 决策详情: 信号质量${pushDecision.factors.signalQuality?.score?.toFixed(1) || 'N/A'}, 价格变动${pushDecision.factors.priceChange?.score?.toFixed(1) || 'N/A'}, 技术评分${pushDecision.factors.technicalScore?.score?.toFixed(1) || 'N/A'}`, 'gray'));
       return;
     }
-    console.log(color('✅ 内容去重检查通过', 'green'));
+    console.log(color(`✅ 智能推送决策通过: ${pushDecision.reason}`, 'green'));
 
     if (toPush.length > 0) {
       // 使用增强版策略的推送函数

@@ -109,27 +109,51 @@ class PushManager {
   }
 
   canPush(type = 'default', priority = 'normal', now = dayjs()) {
-    // 类型白名单
+    const checks = [];
+
+    // 类型白名单检查
     if (Array.isArray(this.config.allowedTypes) && this.config.allowedTypes.length > 0) {
-      if (!this.config.allowedTypes.includes(type)) return { allow: false, reason: '类型未允许' };
+      if (!this.config.allowedTypes.includes(type)) {
+        checks.push({ passed: false, reason: '类型未允许', critical: true });
+      } else {
+        checks.push({ passed: true, reason: '类型检查通过' });
+      }
     }
 
-    // 非交易时间限制（若不允许）
-    if (!this.config.allowNonTradingHours && !this.isTradingTime(now)) {
-      return { allow: false, reason: '非交易时间' };
+    // 非交易时间限制检查（若不允许）
+    const isTradingTime = this.isTradingTime(now);
+    if (!this.config.allowNonTradingHours && !isTradingTime) {
+      checks.push({ passed: false, reason: '非交易时间', critical: priority !== 'high' });
+    } else {
+      checks.push({ passed: true, reason: isTradingTime ? '交易时间内' : '允许非交易时间推送' });
     }
 
-    // 高频限制（非高优先级也受限）
-    if (this._rateLimitExceeded(now)) {
-      if (priority !== 'high') return { allow: false, reason: '超过每小时上限' };
+    // 高频限制检查
+    const rateLimitExceeded = this._rateLimitExceeded(now);
+    if (rateLimitExceeded && priority !== 'high') {
+      checks.push({ passed: false, reason: '超过每小时上限', critical: true });
+    } else {
+      checks.push({ passed: true, reason: rateLimitExceeded ? '高优先级穿透频率限制' : '频率限制检查通过' });
     }
 
-    // 最小间隔（高优先级可穿透）
-    if (this._withinMinInterval(type, now.valueOf())) {
-      if (priority !== 'high') return { allow: false, reason: '未达到最小间隔' };
+    // 最小间隔检查
+    const withinMinInterval = this._withinMinInterval(type, now.valueOf());
+    if (withinMinInterval && priority !== 'high') {
+      checks.push({ passed: false, reason: '未达到最小间隔', critical: true });
+    } else {
+      checks.push({ passed: true, reason: withinMinInterval ? '高优先级穿透间隔限制' : '间隔检查通过' });
     }
 
-    return { allow: true };
+    // 综合判断
+    const criticalFailures = checks.filter(c => !c.passed && c.critical);
+    const allow = criticalFailures.length === 0;
+
+    return {
+      allow,
+      reason: allow ? '所有检查通过' : criticalFailures.map(c => c.reason).join(', '),
+      checks,
+      priority
+    };
   }
 
   // 内容去重：在 duplicateWindowHours 内，若内容哈希出现过则视为重复
@@ -139,6 +163,85 @@ class PushManager {
     if (!rec) return false;
     const hours = (now.valueOf() - rec.ts) / 3600000;
     return hours < this.config.duplicateWindowHours;
+  }
+
+  /**
+   * 智能推送决策
+   * 综合考虑多个因素决定是否推送
+   * @param {Object} options - 推送选项
+   * @returns {Object} 决策结果
+   */
+  smartPushDecision(options = {}) {
+    const {
+      content,
+      type = 'default',
+      priority = 'normal',
+      signals = [],
+      priceChanges = [],
+      technicalScores = [],
+      now = dayjs()
+    } = options;
+
+    const decision = {
+      shouldPush: false,
+      reason: '',
+      score: 0,
+      factors: {}
+    };
+
+    // 基础推送检查
+    const canPushResult = this.canPush(type, priority, now);
+    decision.factors.basicChecks = canPushResult;
+
+    if (!canPushResult.allow) {
+      decision.reason = `基础检查失败: ${canPushResult.reason}`;
+      return decision;
+    }
+
+    // 内容去重检查
+    const isDuplicate = this.isDuplicateContent(content, now);
+    decision.factors.contentDuplicate = isDuplicate;
+
+    if (isDuplicate && priority !== 'high') {
+      decision.reason = '内容重复';
+      return decision;
+    }
+
+    // 信号质量评分
+    let signalQualityScore = 0;
+    if (signals.length > 0) {
+      const strongSignals = signals.filter(s => s.includes('强烈买入') || s.includes('买入')).length;
+      const weakSignals = signals.filter(s => s.includes('卖出') || s.includes('信号矛盾')).length;
+      signalQualityScore = (strongSignals * 2 - weakSignals) / signals.length * 100;
+    }
+    decision.factors.signalQuality = { score: signalQualityScore, signals: signals.length };
+
+    // 价格变动评分
+    let priceChangeScore = 0;
+    if (priceChanges.length > 0) {
+      const avgChange = priceChanges.reduce((sum, change) => sum + Math.abs(change), 0) / priceChanges.length;
+      priceChangeScore = Math.min(avgChange * 10, 100); // 价格变动越大分数越高
+    }
+    decision.factors.priceChange = { score: priceChangeScore, avgChange: priceChanges.length > 0 ? priceChanges.reduce((sum, change) => sum + Math.abs(change), 0) / priceChanges.length : 0 };
+
+    // 技术评分
+    let techScore = 0;
+    if (technicalScores.length > 0) {
+      techScore = technicalScores.reduce((sum, score) => sum + score, 0) / technicalScores.length;
+    }
+    decision.factors.technicalScore = { score: techScore, count: technicalScores.length };
+
+    // 综合评分计算
+    decision.score = signalQualityScore * 0.4 + priceChangeScore * 0.3 + techScore * 0.3;
+
+    // 推送决策阈值
+    const pushThreshold = priority === 'high' ? 30 : priority === 'low' ? 70 : 50;
+    decision.shouldPush = decision.score >= pushThreshold;
+    decision.reason = decision.shouldPush ?
+      `综合评分${decision.score.toFixed(1)}超过阈值${pushThreshold}` :
+      `综合评分${decision.score.toFixed(1)}低于阈值${pushThreshold}`;
+
+    return decision;
   }
 
   // 标记内容已发送

@@ -1,4 +1,5 @@
 // 📋 特别关注ETF模块
+const NumberFormatter = require('./numberFormatter');
 
 /**
  * 动态关注条件检测器
@@ -664,10 +665,10 @@ class SpecialWatchManager {
       
       text += `  - 当前价格: ¥${alert.currentData.price.toFixed(3)}\n`;
       if (alert.currentData.rsi) {
-        text += `  - RSI: ${alert.currentData.rsi.toFixed(1)}\n`;
+        text += `  - RSI: ${NumberFormatter.formatRSI(alert.currentData.rsi, 1)}\n`;
       }
       if (alert.currentData.technicalScore) {
-        text += `  - 技术评分: ${alert.currentData.technicalScore}/100\n`;
+        text += `  - 技术评分: ${NumberFormatter.formatTechnicalScore(alert.currentData.technicalScore, 1)}/100\n`;
       }
       text += `\n`;
     });

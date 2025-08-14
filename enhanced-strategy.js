@@ -8,6 +8,8 @@ const decimal = require('decimal.js');
 
 // 导入新增模块
 const WeChatBot = require('./src/utils/wechatBot');
+const NumberFormatter = require('./src/utils/numberFormatter');
+const { FormatManager } = require('./src/config/formatConfig');
 const TechnicalIndicators = require('./src/utils/technicalIndicators');
 const BacktestEngine = require('./src/utils/backtestEngine');
 const DataSourceManager = require('./src/utils/dataSourceManager');
@@ -332,7 +334,7 @@ function generateEnhancedStrategy(stats) {
       return scoreB - scoreA;
     })
     .slice(0, 3)
-    .map(s => `${s.name} (评分:${s.technicalScore.score.toFixed(0)})`);
+    .map(s => `${s.name} (评分:${NumberFormatter.formatTechnicalScore(s.technicalScore.score, 0)})`);
 
   // 生成推荐操作
   let action = '持有';
@@ -405,33 +407,36 @@ function generateEnhancedReport(strategies, stats) {
         止盈价: pos.takeProfit
       }))
     },
-    data: stats.map(s => ({
-      ETF: s.name,
-      代码: s.symbol,
-      当前价格: s.current.toFixed(s.priceDecimals),
-      买入阈值: s.buy.toFixed(s.priceDecimals),
-      卖出阈值: s.sell.toFixed(s.priceDecimals),
-      MA5均线: s.ma5.toFixed(s.priceDecimals),
-      波动率: s.volatility,
-      交易信号: stripAnsi(s.signal?.text || s.signal),
-      技术评分: s.technicalScore?.score?.toFixed(0) || 'N/A',
-      信号强度: s.signal?.confidence || '中等',
-      RSI: s.technicalIndicators?.rsi?.toFixed(2) || 'N/A',
-      MACD: s.technicalIndicators?.macd ?
-        `${s.technicalIndicators.macd.macd.toFixed(4)}/${s.technicalIndicators.macd.signal.toFixed(4)}` : 'N/A',
-      KDJ_K: s.technicalIndicators?.kdj?.k || 'N/A',
-      KDJ_D: s.technicalIndicators?.kdj?.d || 'N/A',
-      KDJ_J: s.technicalIndicators?.kdj?.j || 'N/A',
-      KDJ信号: s.technicalIndicators?.kdj?.signal || 'N/A',
-      威廉指标: s.technicalIndicators?.williamsR?.value || 'N/A',
-      威廉信号: s.technicalIndicators?.williamsR?.signal || 'N/A',
-      CCI: s.technicalIndicators?.cci?.value || 'N/A',
-      CCI信号: s.technicalIndicators?.cci?.signal || 'N/A',
-      ATR: s.technicalIndicators?.atr?.value || 'N/A',
-      ATR百分比: s.technicalIndicators?.atr?.percentage || 'N/A',
-      价格偏离: `${(((s.current - s.ma5) / s.ma5) * 100).toFixed(2)}%`,
-      风险等级: getRiskLevel(s.volatility)
-    })),
+    data: stats.map(s => {
+      // 使用格式化管理器统一处理数值格式化
+      const formattedData = {
+        ETF: s.name,
+        代码: s.symbol,
+        当前价格: FormatManager.format(s.current, 'prices', 'current'),
+        买入阈值: FormatManager.format(s.buy, 'prices', 'buy'),
+        卖出阈值: FormatManager.format(s.sell, 'prices', 'sell'),
+        MA5均线: FormatManager.format(s.ma5, 'prices', 'ma5'),
+        波动率: s.volatility,
+        交易信号: stripAnsi(s.signal?.text || s.signal),
+        技术评分: FormatManager.format(s.technicalScore?.score, 'report', 'technicalScore'),
+        信号强度: s.signal?.confidence || '中等',
+        RSI: FormatManager.format(s.technicalIndicators?.rsi, 'report', 'rsi'),
+        MACD: FormatManager.format(s.technicalIndicators?.macd, 'report', 'macd'),
+        KDJ_K: FormatManager.format(s.technicalIndicators?.kdj?.k, 'technicalIndicators', 'kdj'),
+        KDJ_D: FormatManager.format(s.technicalIndicators?.kdj?.d, 'technicalIndicators', 'kdj'),
+        KDJ_J: FormatManager.format(s.technicalIndicators?.kdj?.j, 'technicalIndicators', 'kdj'),
+        KDJ信号: s.technicalIndicators?.kdj?.signal || 'N/A',
+        威廉指标: FormatManager.format(s.technicalIndicators?.williamsR?.value, 'technicalIndicators', 'williamsR'),
+        威廉信号: s.technicalIndicators?.williamsR?.signal || 'N/A',
+        CCI: FormatManager.format(s.technicalIndicators?.cci?.value, 'technicalIndicators', 'cci'),
+        CCI信号: s.technicalIndicators?.cci?.signal || 'N/A',
+        ATR: FormatManager.format(s.technicalIndicators?.atr?.value, 'technicalIndicators', 'atr'),
+        ATR百分比: FormatManager.format(s.technicalIndicators?.atr?.percentage, 'percentages', 'volatility'),
+        价格偏离: FormatManager.format(((s.current - s.ma5) / s.ma5) * 100, 'percentages', 'deviation'),
+        风险等级: getRiskLevel(s.volatility)
+      };
+      return formattedData;
+    }),
     dataSourceStatus: dataSourceManager.getStatus()
   };
 
