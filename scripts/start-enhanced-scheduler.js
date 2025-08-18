@@ -44,8 +44,36 @@ const AUTO_FLOAT_THRESHOLD = Number(process.env.AUTO_FLOAT_THRESHOLD) || 0.5; //
 const AUTO_ALLOW_REPEAT_PUSH = process.env.AUTO_ALLOW_REPEAT_PUSH === 'true'; // 是否允许重复推送（布尔值）
 const ENABLE_AUTO_PUSH = process.env.ENABLE_AUTO_PUSH === 'true'; // 是否启用AUTO推送（布尔值）
 
+// ====== 强制推送功能 ======
+const FORCE_PUSH_INTERVAL_MINUTES = Number(process.env.FORCE_PUSH_INTERVAL_MINUTES) || 30; // 强制推送间隔（分钟）
+const ENABLE_FORCE_PUSH = process.env.ENABLE_FORCE_PUSH !== 'false'; // 是否启用强制推送（默认启用）
+
 // 价格历史缓存文件路径
 const PRICE_CACHE_FILE = './data/auto_push_price_cache.json';
+
+// 强制推送状态跟踪
+let lastForcePushTime = null;
+let forcePushTimer = null;
+
+// 检查是否需要强制推送
+function checkShouldForcePush(now) {
+  if (!ENABLE_FORCE_PUSH) {
+    return false;
+  }
+
+  if (!lastForcePushTime) {
+    return true; // 首次运行，需要强制推送
+  }
+
+  const minutesSinceLastForce = now.diff(dayjs(lastForcePushTime), 'minute');
+  return minutesSinceLastForce >= FORCE_PUSH_INTERVAL_MINUTES;
+}
+
+// 更新强制推送时间
+function updateForcePushTime(now) {
+  lastForcePushTime = now.valueOf();
+  console.log(color(`🕐 更新强制推送时间: ${now.format('YYYY-MM-DD HH:mm:ss')}`, 'blue'));
+}
 
 // 加载价格历史缓存
 function loadPriceCache() {
@@ -88,21 +116,33 @@ function formatSimplePushContent(signals) {
 
 
 
-async function checkAndPushBuyOpportunities(forcePush = false) {
+async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval = false) {
   try {
     const now = dayjs();
 
+    // 检查是否需要强制推送
+    const shouldForceByInterval = checkShouldForcePush(now);
+    const actualForcePush = forcePush || shouldForceByInterval || isForceInterval;
+
     // 调试信息：显示环境变量配置
-    if (!pushManager.shouldSuppressLogs(now) || forcePush) {
+    if (!pushManager.shouldSuppressLogs(now) || actualForcePush) {
       console.log(color('🔍 AUTO推送调试信息:', 'cyan'));
       console.log(color(`  - ENABLE_AUTO_PUSH: ${ENABLE_AUTO_PUSH}`, 'gray'));
+      console.log(color(`  - ENABLE_FORCE_PUSH: ${ENABLE_FORCE_PUSH}`, 'gray'));
       console.log(color(`  - AUTO_ALLOW_REPEAT_PUSH: ${AUTO_ALLOW_REPEAT_PUSH}`, 'gray'));
       console.log(color(`  - AUTO_FLOAT_THRESHOLD: ${AUTO_FLOAT_THRESHOLD}%`, 'gray'));
+      console.log(color(`  - FORCE_PUSH_INTERVAL_MINUTES: ${FORCE_PUSH_INTERVAL_MINUTES}`, 'gray'));
       console.log(color(`  - forcePush: ${forcePush}`, 'gray'));
+      console.log(color(`  - shouldForceByInterval: ${shouldForceByInterval}`, 'gray'));
+      console.log(color(`  - isForceInterval: ${isForceInterval}`, 'gray'));
+      console.log(color(`  - actualForcePush: ${actualForcePush}`, 'gray'));
+      if (lastForcePushTime) {
+        console.log(color(`  - 上次强制推送时间: ${dayjs(lastForcePushTime).format('YYYY-MM-DD HH:mm:ss')}`, 'gray'));
+      }
     }
 
-    // 休息期不推送、不打印
-    if (pushManager.shouldSuppressLogs(now) && !forcePush) {
+    // 休息期不推送、不打印（强制推送除外）
+    if (pushManager.shouldSuppressLogs(now) && !actualForcePush) {
       console.log(color('⏰ 非交易时间，跳过AUTO推送', 'gray'));
       return;
     }
@@ -149,13 +189,13 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
 
       // 详细的条件判断日志
       const conditions = {
-        forcePush: forcePush,
+        forcePush: actualForcePush,
         noLastRecord: !last,
         priceChanged: priceFloat > AUTO_FLOAT_THRESHOLD,
         allowRepeat: AUTO_ALLOW_REPEAT_PUSH
       };
 
-      const shouldPush = forcePush || !last || priceFloat > AUTO_FLOAT_THRESHOLD || AUTO_ALLOW_REPEAT_PUSH;
+      const shouldPush = actualForcePush || !last || priceFloat > AUTO_FLOAT_THRESHOLD || AUTO_ALLOW_REPEAT_PUSH;
 
       if (!pushManager.shouldSuppressLogs(now)) {
         console.log(color(`  📈 ${signal.代码} (${signal.ETF || signal.名称 || signal.name}):`, 'gray'));
@@ -209,10 +249,12 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
       return isNaN(score) ? 50 : score; // 确保返回有效数值
     });
 
+    // 强制推送使用高优先级，可以绕过重复内容检测
+    const pushPriority = actualForcePush ? 'high' : 'normal';
     const pushDecision = pushManager.smartPushDecision({
       content: pushContent,
       type: 'wechat',
-      priority: 'normal',
+      priority: pushPriority,
       signals,
       priceChanges,
       technicalScores,
@@ -247,10 +289,24 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
       await sendWeChatNotification({ ...report, data: toPush, _simpleContent: pushContent });
 
       pushManager.markPushed('wechat', pushContent, [], now);
+
+      // 如果是强制推送，更新强制推送时间
+      if (actualForcePush) {
+        updateForcePushTime(now);
+        console.log(color(`🔥 强制推送执行完成，下次强制推送将在${FORCE_PUSH_INTERVAL_MINUTES}分钟后`, 'yellow'));
+      }
+
       if (!pushManager.shouldSuppressLogs(now)) {
-        console.log(color(`✅ AUTO模式推送${toPush.length}个买入机会`, 'green'));
+        const pushType = actualForcePush ? '强制推送' : 'AUTO模式推送';
+        console.log(color(`✅ ${pushType}${toPush.length}个买入机会`, 'green'));
       }
     } else {
+      // 即使没有新机会，如果是强制推送也要更新时间
+      if (actualForcePush) {
+        updateForcePushTime(now);
+        console.log(color(`🔥 强制推送时间已到，但无新买入机会，下次强制推送将在${FORCE_PUSH_INTERVAL_MINUTES}分钟后`, 'yellow'));
+      }
+
       if (!pushManager.shouldSuppressLogs(now)) {
         console.log(color('ℹ️ 无新买入机会，无需推送', 'gray'));
       }
@@ -281,15 +337,37 @@ async function startEnhancedScheduler() {
       }, 30000); // 延迟30秒启动
     }
 
+    // 强制推送模式：无论内容是否重复，每30分钟必须执行一次推送
+    if (ENABLE_FORCE_PUSH) {
+      console.log(color('🔥 强制推送模式已开启', 'yellow'));
+      console.log(color(`⏰ 将每${FORCE_PUSH_INTERVAL_MINUTES}分钟执行强制推送`, 'gray'));
+
+      // 延迟启动强制推送，避免与其他推送冲突
+      setTimeout(() => {
+        forcePushTimer = setInterval(() => {
+          console.log(color(`🔥 强制推送定时器触发 (${FORCE_PUSH_INTERVAL_MINUTES}分钟间隔)`, 'yellow'));
+          checkAndPushBuyOpportunities(false, true); // isForceInterval = true
+        }, FORCE_PUSH_INTERVAL_MINUTES * 60 * 1000);
+      }, 45000); // 延迟45秒启动，避免与AUTO推送冲突
+    }
+
     // 保持进程运行
     process.on('SIGINT', () => {
       console.log(color('\n🛑 接收到停止信号，正在关闭调度器...', 'yellow'));
+      if (forcePushTimer) {
+        clearInterval(forcePushTimer);
+        console.log(color('🔥 强制推送定时器已清理', 'gray'));
+      }
       scheduler.stop();
       process.exit(0);
     });
 
     process.on('SIGTERM', () => {
       console.log(color('\n🛑 接收到终止信号，正在关闭调度器...', 'yellow'));
+      if (forcePushTimer) {
+        clearInterval(forcePushTimer);
+        console.log(color('🔥 强制推送定时器已清理', 'gray'));
+      }
       scheduler.stop();
       process.exit(0);
     });
