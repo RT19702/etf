@@ -80,7 +80,7 @@ function formatSimplePushContent(signals) {
   if (!signals || signals.length === 0) return '无买入机会';
   let content = `【ETF买入机会推送】\n`;
   signals.forEach(s => {
-    content += `- ${s.名称 || s.name || s.代码}: 当前价${s.当前价格}，信号：${s.交易信号}\n`;
+    content += `- ${s.ETF || s.名称 || s.name || s.代码}: 当前价${s.当前价格}，信号：${s.交易信号}\n`;
   });
   return content;
 }
@@ -158,7 +158,7 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
       const shouldPush = forcePush || !last || priceFloat > AUTO_FLOAT_THRESHOLD || AUTO_ALLOW_REPEAT_PUSH;
 
       if (!pushManager.shouldSuppressLogs(now)) {
-        console.log(color(`  📈 ${signal.代码} (${signal.名称 || signal.name}):`, 'gray'));
+        console.log(color(`  📈 ${signal.代码} (${signal.ETF || signal.名称 || signal.name}):`, 'gray'));
         console.log(color(`    - 当前价格: ${currentPrice} (${typeof signal.当前价格}: "${signal.当前价格}")`, 'gray'));
         if (last) {
           console.log(color(`    - 历史价格: ${lastPrice} (缓存时间: ${last.cacheTime || '未知'})`, 'gray'));
@@ -199,9 +199,15 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
       if (!last) return 5; // 新信号默认5%变动
       const currentPrice = parseFloat(s.当前价格);
       const lastPrice = parseFloat(last.当前价格);
+      if (isNaN(currentPrice) || isNaN(lastPrice) || lastPrice <= 0) {
+        return 5; // 如果价格数据无效，使用默认变动
+      }
       return Math.abs(currentPrice - lastPrice) / lastPrice * 100;
     });
-    const technicalScores = toPush.map(s => parseFloat(s.技术评分) || 50);
+    const technicalScores = toPush.map(s => {
+      const score = parseFloat(s.技术评分);
+      return isNaN(score) ? 50 : score; // 确保返回有效数值
+    });
 
     const pushDecision = pushManager.smartPushDecision({
       content: pushContent,
@@ -215,7 +221,22 @@ async function checkAndPushBuyOpportunities(forcePush = false) {
 
     if (!pushDecision.shouldPush) {
       console.log(color(`🚫 智能推送决策阻止推送: ${pushDecision.reason}`, 'yellow'));
-      console.log(color(`📊 决策详情: 信号质量${pushDecision.factors.signalQuality?.score?.toFixed(1) || 'N/A'}, 价格变动${pushDecision.factors.priceChange?.score?.toFixed(1) || 'N/A'}, 技术评分${pushDecision.factors.technicalScore?.score?.toFixed(1) || 'N/A'}`, 'gray'));
+
+      // 详细的调试信息
+      const signalQuality = pushDecision.factors.signalQuality?.score;
+      const priceChange = pushDecision.factors.priceChange?.score;
+      const technicalScore = pushDecision.factors.technicalScore?.score;
+
+      console.log(color(`📊 决策详情: 信号质量${signalQuality !== undefined ? signalQuality.toFixed(1) : 'N/A'}, 价格变动${priceChange !== undefined ? priceChange.toFixed(1) : 'N/A'}, 技术评分${technicalScore !== undefined ? technicalScore.toFixed(1) : 'N/A'}`, 'gray'));
+
+      // 调试信息：显示原始数据
+      if (!pushManager.shouldSuppressLogs(now)) {
+        console.log(color(`🔍 调试信息:`, 'cyan'));
+        console.log(color(`  - 信号数组长度: ${signals.length}, 内容: [${signals.slice(0, 3).join(', ')}${signals.length > 3 ? '...' : ''}]`, 'cyan'));
+        console.log(color(`  - 价格变动数组: [${priceChanges.slice(0, 3).map(p => p.toFixed(2)).join(', ')}${priceChanges.length > 3 ? '...' : ''}]`, 'cyan'));
+        console.log(color(`  - 技术评分数组: [${technicalScores.slice(0, 3).map(s => s.toFixed(1)).join(', ')}${technicalScores.length > 3 ? '...' : ''}]`, 'cyan'));
+        console.log(color(`  - 决策因子: ${JSON.stringify(pushDecision.factors, null, 2)}`, 'cyan'));
+      }
       return;
     }
     console.log(color(`✅ 智能推送决策通过: ${pushDecision.reason}`, 'green'));

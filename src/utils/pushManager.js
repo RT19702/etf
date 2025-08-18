@@ -193,6 +193,41 @@ class PushManager {
     const canPushResult = this.canPush(type, priority, now);
     decision.factors.basicChecks = canPushResult;
 
+    // 无论基础检查是否通过，都计算各项因子用于显示
+    // 信号质量评分
+    let signalQualityScore = 0;
+    if (signals.length > 0) {
+      const validSignals = signals.filter(s => s && typeof s === 'string' && s.trim() !== '');
+      if (validSignals.length > 0) {
+        const strongSignals = validSignals.filter(s => s.includes('强烈买入') || s.includes('买入')).length;
+        const weakSignals = validSignals.filter(s => s.includes('卖出') || s.includes('信号矛盾')).length;
+        signalQualityScore = (strongSignals * 2 - weakSignals) / validSignals.length * 100;
+      }
+    }
+    decision.factors.signalQuality = { score: signalQualityScore, signals: signals.length, validSignals: signals.filter(s => s && typeof s === 'string' && s.trim() !== '').length };
+
+    // 价格变动评分
+    let priceChangeScore = 0;
+    let avgChange = 0;
+    if (priceChanges.length > 0) {
+      const validChanges = priceChanges.filter(change => !isNaN(change) && isFinite(change));
+      if (validChanges.length > 0) {
+        avgChange = validChanges.reduce((sum, change) => sum + Math.abs(change), 0) / validChanges.length;
+        priceChangeScore = Math.min(avgChange * 10, 100); // 价格变动越大分数越高
+      }
+    }
+    decision.factors.priceChange = { score: priceChangeScore, avgChange, validCount: priceChanges.filter(change => !isNaN(change) && isFinite(change)).length };
+
+    // 技术评分
+    let techScore = 0;
+    if (technicalScores.length > 0) {
+      const validScores = technicalScores.filter(score => !isNaN(score) && isFinite(score));
+      if (validScores.length > 0) {
+        techScore = validScores.reduce((sum, score) => sum + score, 0) / validScores.length;
+      }
+    }
+    decision.factors.technicalScore = { score: techScore, count: technicalScores.length, validCount: technicalScores.filter(score => !isNaN(score) && isFinite(score)).length };
+
     if (!canPushResult.allow) {
       decision.reason = `基础检查失败: ${canPushResult.reason}`;
       return decision;
@@ -207,29 +242,7 @@ class PushManager {
       return decision;
     }
 
-    // 信号质量评分
-    let signalQualityScore = 0;
-    if (signals.length > 0) {
-      const strongSignals = signals.filter(s => s.includes('强烈买入') || s.includes('买入')).length;
-      const weakSignals = signals.filter(s => s.includes('卖出') || s.includes('信号矛盾')).length;
-      signalQualityScore = (strongSignals * 2 - weakSignals) / signals.length * 100;
-    }
-    decision.factors.signalQuality = { score: signalQualityScore, signals: signals.length };
 
-    // 价格变动评分
-    let priceChangeScore = 0;
-    if (priceChanges.length > 0) {
-      const avgChange = priceChanges.reduce((sum, change) => sum + Math.abs(change), 0) / priceChanges.length;
-      priceChangeScore = Math.min(avgChange * 10, 100); // 价格变动越大分数越高
-    }
-    decision.factors.priceChange = { score: priceChangeScore, avgChange: priceChanges.length > 0 ? priceChanges.reduce((sum, change) => sum + Math.abs(change), 0) / priceChanges.length : 0 };
-
-    // 技术评分
-    let techScore = 0;
-    if (technicalScores.length > 0) {
-      techScore = technicalScores.reduce((sum, score) => sum + score, 0) / technicalScores.length;
-    }
-    decision.factors.technicalScore = { score: techScore, count: technicalScores.length };
 
     // 综合评分计算
     decision.score = signalQualityScore * 0.4 + priceChangeScore * 0.3 + techScore * 0.3;
