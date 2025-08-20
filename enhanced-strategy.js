@@ -234,84 +234,138 @@ async function analyzeSymbolEnhanced(etf) {
   }
 }
 
-// 增强信号生成
+// 增强信号生成（智能决策版本 - 避免信号矛盾）
 function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) {
-  let signal = '持有';
+  // 收集所有信号源
+  const signalSources = [];
+
+  // 1. 基础价格信号（权重：30%）
+  let priceSignal = 0;
+  if (current < buy) {
+    priceSignal = 1; // 买入
+  } else if (current > sell) {
+    priceSignal = -1; // 卖出
+  }
+  signalSources.push({ source: 'price', signal: priceSignal, weight: 0.30, strength: Math.abs(priceSignal) });
+
+  // 2. 技术评分信号（权重：25%）
+  const fusion = technicalScore.score;
+  let techSignal = 0;
+  let techStrength = 0;
+  if (fusion >= 70) {
+    techSignal = 1;
+    techStrength = Math.min((fusion - 50) / 50, 1);
+  } else if (fusion <= 30) {
+    techSignal = -1;
+    techStrength = Math.min((50 - fusion) / 50, 1);
+  }
+  signalSources.push({ source: 'technical', signal: techSignal, weight: 0.25, strength: techStrength });
+
+  // 3. MACD信号（权重：20%）
+  let macdSignal = 0;
+  let macdStrength = 0;
+  if (indicators.macd && indicators.macd.macd !== undefined && indicators.macd.signal !== undefined) {
+    const macdDiff = indicators.macd.macd - indicators.macd.signal;
+    if (macdDiff > 0) {
+      macdSignal = 1;
+      macdStrength = Math.min(Math.abs(macdDiff) * 100, 1);
+    } else if (macdDiff < 0) {
+      macdSignal = -1;
+      macdStrength = Math.min(Math.abs(macdDiff) * 100, 1);
+    }
+  }
+  signalSources.push({ source: 'macd', signal: macdSignal, weight: 0.20, strength: macdStrength });
+
+  // 4. RSI信号（权重：15%）
+  let rsiSignal = 0;
+  let rsiStrength = 0;
+  if (indicators.rsi) {
+    if (indicators.rsi < 30) {
+      rsiSignal = 1;
+      rsiStrength = (30 - indicators.rsi) / 30;
+    } else if (indicators.rsi > 70) {
+      rsiSignal = -1;
+      rsiStrength = (indicators.rsi - 70) / 30;
+    }
+  }
+  signalSources.push({ source: 'rsi', signal: rsiSignal, weight: 0.15, strength: rsiStrength });
+
+  // 5. KDJ信号（权重：10%）
+  let kdjSignal = 0;
+  let kdjStrength = 0;
+  if (indicators.kdj && indicators.kdj.k !== undefined && indicators.kdj.d !== undefined) {
+    const k = parseFloat(indicators.kdj.k);
+    const d = parseFloat(indicators.kdj.d);
+    if (k > d && k < 50) {
+      kdjSignal = 1;
+      kdjStrength = 0.8;
+    } else if (k < d && k > 50) {
+      kdjSignal = -1;
+      kdjStrength = 0.8;
+    }
+  }
+  signalSources.push({ source: 'kdj', signal: kdjSignal, weight: 0.10, strength: kdjStrength });
+
+  // 计算加权综合信号
+  let weightedSignal = 0;
+  let totalWeight = 0;
+  let signalStrength = 0;
+
+  signalSources.forEach(source => {
+    const effectiveWeight = source.weight * (0.5 + source.strength * 0.5); // 强度影响权重
+    weightedSignal += source.signal * effectiveWeight;
+    totalWeight += effectiveWeight;
+    signalStrength += Math.abs(source.signal) * source.strength * source.weight;
+  });
+
+  // 标准化信号
+  if (totalWeight > 0) {
+    weightedSignal = weightedSignal / totalWeight;
+  }
+
+  // 决定最终信号
+  let finalSignal = '持有';
   let signalColor = 'green';
   let confidence = '中等';
 
-  // 基础价格信号
-  if (current < buy) {
-    signal = '买入';
-    signalColor = 'blue';
-  } else if (current > sell) {
-    signal = '卖出';
-    signalColor = 'red';
-  }
-
-  // 技术指标融合分数参与
-  const fusion = arguments.length > 5 ? arguments[5] : technicalScore.score;
-  if (fusion >= 75) {
-    if (signal === '买入') {
-      signal = '强烈买入';
+  if (weightedSignal > 0.3) {
+    if (weightedSignal > 0.6 && signalStrength > 0.4) {
+      finalSignal = '强烈买入';
       confidence = '高';
-    } else if (signal === '持有') {
-      signal = '弱势买入';
-      signalColor = 'blue';
+    } else {
+      finalSignal = '买入';
+      confidence = signalStrength > 0.3 ? '高' : '中等';
     }
-  } else if (fusion <= 25) {
-    if (signal === '卖出') {
-      signal = '强烈卖出';
+    signalColor = 'blue';
+  } else if (weightedSignal < -0.3) {
+    if (weightedSignal < -0.6 && signalStrength > 0.4) {
+      finalSignal = '强烈卖出';
       confidence = '高';
-    } else if (signal === '持有') {
-      signal = '弱势卖出';
+    } else {
+      finalSignal = '卖出';
+      confidence = signalStrength > 0.3 ? '高' : '中等';
+    }
+    signalColor = 'red';
+  } else {
+    // 中性区间，根据信号强度决定是否给出弱势信号
+    if (weightedSignal > 0.1 && signalStrength > 0.2) {
+      finalSignal = '弱势买入';
+      signalColor = 'blue';
+    } else if (weightedSignal < -0.1 && signalStrength > 0.2) {
+      finalSignal = '弱势卖出';
       signalColor = 'red';
     }
   }
 
-  // MACD确认和信号增强
-  if (indicators.macd && indicators.macd.macd !== undefined && indicators.macd.signal !== undefined) {
-    const isMacdGoldenCross = indicators.macd.macd > indicators.macd.signal;
-    const isMacdDeathCross = indicators.macd.macd < indicators.macd.signal;
-
-    if (isMacdGoldenCross) {
-      // MACD金叉：增强买入信号，与卖出信号矛盾
-      if (signal.includes('买入')) {
-        if (signal === '买入') {
-          signal = '强烈买入';
-          confidence = '高';
-        }
-      } else if (signal.includes('卖出')) {
-        signal = '信号矛盾';
-        signalColor = 'yellow';
-        confidence = '低';
-      } else if (signal === '持有') {
-        signal = '弱势买入';
-        signalColor = 'blue';
-        confidence = '中等';
-      }
-    } else if (isMacdDeathCross) {
-      // MACD死叉：与买入信号矛盾，增强卖出信号
-      if (signal.includes('买入')) {
-        signal = '信号矛盾';
-        signalColor = 'yellow';
-        confidence = '低';
-      } else if (signal.includes('卖出')) {
-        if (signal === '卖出') {
-          signal = '强烈卖出';
-          confidence = '高';
-        }
-      }
-    }
-  }
-
   return {
-    text: color(signal, signalColor),
-    level: signal,
+    text: color(finalSignal, signalColor),
+    level: finalSignal,
     confidence,
     score: technicalScore.score,
     fusionScore: fusion,
-    signals: technicalScore.signals
+    signals: technicalScore.signals,
+    weightedSignal: weightedSignal.toFixed(3),
+    signalStrength: signalStrength.toFixed(3)
   };
 }
 
@@ -474,7 +528,7 @@ function generateEnhancedReport(strategies, stats) {
         威廉信号: s.technicalIndicators?.williamsR?.signal || 'N/A',
         CCI: FormatManager.format(s.technicalIndicators?.cci?.value, 'technicalIndicators', 'cci'),
         CCI信号: s.technicalIndicators?.cci?.signal || 'N/A',
-        ATR: FormatManager.format(s.technicalIndicators?.atr?.value, 'technicalIndicators', 'atr'),
+        ATR: FormatManager.format(s.technicalIndicators?.atr, 'technicalIndicators', 'atr'),
         ATR百分比: FormatManager.format(s.technicalIndicators?.atr?.percentage, 'percentages', 'volatility'),
         价格偏离: FormatManager.format(((s.current - s.ma5) / s.ma5) * 100, 'percentages', 'deviation'),
         风险等级: getRiskLevel(s.volatility)
