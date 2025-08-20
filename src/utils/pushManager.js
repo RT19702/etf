@@ -3,6 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const dayjs = require('dayjs');
+const timezone = require('dayjs/plugin/timezone');
+const utc = require('dayjs/plugin/utc');
+
+// 配置dayjs时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.tz.setDefault('Asia/Shanghai');
 
 class PushManager {
   constructor(options = {}) {
@@ -14,7 +21,7 @@ class PushManager {
         afternoon: { start: '13:00', end: '15:00' }
       },
       // 是否允许非交易时间推送
-      allowNonTradingHours: options.allowNonTradingHours === true,
+      allowNonTradingHours: options.allowNonTradingHours === true || process.env.ALLOW_NON_TRADING_HOURS === 'true',
       // 节假日（YYYY-MM-DD）
       holidays: Array.isArray(options.holidays) ? options.holidays : (() => {
         try { return JSON.parse(process.env.HOLIDAYS_JSON || '[]'); } catch { return []; }

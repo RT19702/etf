@@ -3,6 +3,13 @@ require('dotenv').config({ path: './config/.env' });
 const axios = require('axios');
 const fs = require('fs');
 const dayjs = require('dayjs');
+const timezone = require('dayjs/plugin/timezone');
+const utc = require('dayjs/plugin/utc');
+
+// 配置dayjs时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.tz.setDefault('Asia/Shanghai');
 const Bottleneck = require('bottleneck');
 const decimal = require('decimal.js');
 
@@ -106,16 +113,25 @@ async function analyzeSymbolEnhanced(etf) {
     console.log(color(`  🔍 分析 ${etf.name}...`, 'gray'));
     
     // 使用多数据源获取K线数据（带缓存和重试）
+    // MACD需要至少34天数据（26+9-1），所以获取更多数据
+    const requiredDays = Math.max(CONFIG.lookbackDays + 20, 50); // 确保有足够数据计算MACD
     const kline = await fetchWithRetry(
-      () => dataSourceManager.fetchKlineData(etf.symbol, CONFIG.lookbackDays + 10),
+      () => dataSourceManager.fetchKlineData(etf.symbol, requiredDays),
       etf.symbol + '_kline', 'kline', 3, 800
     );
-    if (!kline || kline.length < CONFIG.lookbackDays) {
-      console.log(color(`    ⚠️ ${etf.name} 数据不足`, 'yellow'));
+    if (!kline || kline.length < 35) { // 至少需要35天数据来计算MACD
+      console.log(color(`    ⚠️ ${etf.name} 数据不足 (需要至少35天，实际${kline?.length || 0}天)`, 'yellow'));
       return null;
     }
 
+    // 使用所有可用数据计算技术指标，但统计分析仍使用最近的数据
     const recent = kline.slice(-CONFIG.lookbackDays);
+    const allPrices = kline.map(d => d.close);
+    const allHighs = kline.map(d => d.high);
+    const allLows = kline.map(d => d.low);
+    const allVolumes = kline.map(d => d.volume);
+
+    // 用于统计分析的最近数据
     const prices = recent.map(d => d.close);
     const highs = recent.map(d => d.high);
     const lows = recent.map(d => d.low);
@@ -138,16 +154,17 @@ async function analyzeSymbolEnhanced(etf) {
     }
 
     // 计算技术指标（增强版 - 包含新增指标）
+    // 使用所有可用数据计算技术指标，确保MACD等指标有足够的历史数据
     const technicalIndicators = {
-      rsi: TechnicalIndicators.calculateRSI(prices),
-      macd: TechnicalIndicators.calculateMACD(prices),
-      bollinger: TechnicalIndicators.calculateBollingerBands(prices),
-      kdj: TechnicalIndicators.calculateKDJ(highs, lows, prices),
-      williamsR: TechnicalIndicators.calculateWilliamsR(highs, lows, prices),
-      cci: TechnicalIndicators.calculateCCI(highs, lows, prices),
-      atr: TechnicalIndicators.calculateATR(highs, lows, prices),
-      volumeRatio: TechnicalIndicators.calculateVolumeRatio(volumes),
-      momentum: TechnicalIndicators.calculateMomentum(prices, momentumWindow),
+      rsi: TechnicalIndicators.calculateRSI(allPrices),
+      macd: TechnicalIndicators.calculateMACD(allPrices),
+      bollinger: TechnicalIndicators.calculateBollingerBands(allPrices),
+      kdj: TechnicalIndicators.calculateKDJ(allHighs, allLows, allPrices),
+      williamsR: TechnicalIndicators.calculateWilliamsR(allHighs, allLows, allPrices),
+      cci: TechnicalIndicators.calculateCCI(allHighs, allLows, allPrices),
+      atr: TechnicalIndicators.calculateATR(allHighs, allLows, allPrices),
+      volumeRatio: TechnicalIndicators.calculateVolumeRatio(allVolumes),
+      momentum: TechnicalIndicators.calculateMomentum(allPrices, momentumWindow),
       currentPrice: current
     };
 
@@ -252,12 +269,39 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators) 
     }
   }
 
-  // MACD确认
-  if (indicators.macd && indicators.macd.macd > indicators.macd.signal) {
-    if (signal.includes('卖出')) {
-      signal = '信号矛盾';
-      signalColor = 'yellow';
-      confidence = '低';
+  // MACD确认和信号增强
+  if (indicators.macd && indicators.macd.macd !== undefined && indicators.macd.signal !== undefined) {
+    const isMacdGoldenCross = indicators.macd.macd > indicators.macd.signal;
+    const isMacdDeathCross = indicators.macd.macd < indicators.macd.signal;
+
+    if (isMacdGoldenCross) {
+      // MACD金叉：增强买入信号，与卖出信号矛盾
+      if (signal.includes('买入')) {
+        if (signal === '买入') {
+          signal = '强烈买入';
+          confidence = '高';
+        }
+      } else if (signal.includes('卖出')) {
+        signal = '信号矛盾';
+        signalColor = 'yellow';
+        confidence = '低';
+      } else if (signal === '持有') {
+        signal = '弱势买入';
+        signalColor = 'blue';
+        confidence = '中等';
+      }
+    } else if (isMacdDeathCross) {
+      // MACD死叉：与买入信号矛盾，增强卖出信号
+      if (signal.includes('买入')) {
+        signal = '信号矛盾';
+        signalColor = 'yellow';
+        confidence = '低';
+      } else if (signal.includes('卖出')) {
+        if (signal === '卖出') {
+          signal = '强烈卖出';
+          confidence = '高';
+        }
+      }
     }
   }
 
@@ -373,7 +417,7 @@ function generateEnhancedReport(strategies, stats) {
 
   const report = {
     title: 'ETF轮动策略增强报告',
-    date: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    date: dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
     version: '2.0 Enhanced',
     summary: {
       推荐操作: enhancedStrategy.action,
@@ -494,7 +538,14 @@ function getDataSourceName(sourceKey) {
 // 格式化增强版企业微信报告
 function formatEnhancedWeChatReport(report) {
   let content = `# 📊 ETF轮动策略\n\n`;
-  content += `**报告时间**: ${report.date}\n\n`;
+
+  // 显示推送时间和报告生成时间
+  if (report.pushTime && report.originalDate) {
+    content += `**推送时间**: ${report.pushTime}\n`;
+    content += `**报告生成**: ${report.originalDate}\n\n`;
+  } else {
+    content += `**报告时间**: ${report.date}\n\n`;
+  }
   // 核心推荐（美化）
   content += `## 🎯 策略推荐\n`;
   content += `- **推荐操作**: <font color="${report.summary.推荐操作.includes('买入') ? 'blue' : report.summary.推荐操作.includes('卖出') ? 'red' : 'black'}">${report.summary.推荐操作}</font>\n`;
@@ -529,7 +580,13 @@ function formatEnhancedWeChatReport(report) {
       content += `- **${etf.ETF}** (${etf.代码}): ¥${etf.当前价格}\n`;
       content += `  - 📊 技术评分: ${etf.技术评分}/100 (${etf.信号强度})\n`;
       content += `  - 📈 基础指标: RSI=${etf.RSI} | MACD=${etf.MACD}\n`;
-      content += `  - 🔍 新增指标: KDJ(${etf.KDJ_K},${etf.KDJ_D},${etf.KDJ_J}) | 威廉=${etf.威廉指标}\n`;
+      // 使用KDJ字符串格式化方法
+      const kdjString = NumberFormatter.formatKDJString({
+        k: etf.KDJ_K,
+        d: etf.KDJ_D,
+        j: etf.KDJ_J
+      });
+      content += `  - 🔍 新增指标: KDJ(${kdjString}) | 威廉=${etf.威廉指标}\n`;
       content += `  - 📉 CCI=${etf.CCI} | ATR=${etf.ATR百分比}%\n`;
       content += `  - 💰 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
       content += `  - 📊 价格偏离: ${etf.价格偏离} | 风险等级: ${etf.风险等级}\n`;

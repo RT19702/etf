@@ -112,6 +112,37 @@ class NumberFormatter {
   }
 
   /**
+   * 格式化KDJ指标为字符串格式（用于推送消息）
+   * @param {Object} kdj - KDJ对象
+   * @param {number} decimals - 小数位数，默认1位
+   * @returns {string} 格式化后的KDJ字符串，如"45.2,38.7,58.1"
+   */
+  static formatKDJString(kdj, decimals = 1) {
+    if (!kdj || typeof kdj !== 'object') {
+      return 'N/A,N/A,N/A';
+    }
+
+    const k = kdj.k !== undefined ? new decimal(kdj.k).toDecimalPlaces(decimals).toString() : 'N/A';
+    const d = kdj.d !== undefined ? new decimal(kdj.d).toDecimalPlaces(decimals).toString() : 'N/A';
+    const j = kdj.j !== undefined ? new decimal(kdj.j).toDecimalPlaces(decimals).toString() : 'N/A';
+
+    return `${k},${d},${j}`;
+  }
+
+  /**
+   * 格式化单个KDJ值（K、D或J）
+   * @param {number} value - KDJ值
+   * @param {number} decimals - 小数位数，默认1位
+   * @returns {string} 格式化后的值
+   */
+  static formatKDJValue(value, decimals = 1) {
+    if (value === undefined || value === null || isNaN(value)) {
+      return 'N/A';
+    }
+    return new decimal(value).toDecimalPlaces(decimals).toString();
+  }
+
+  /**
    * 格式化ATR指标
    * @param {Object} atr - ATR对象
    * @param {number} decimals - 小数位数，默认2位

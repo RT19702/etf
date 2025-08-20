@@ -56,25 +56,41 @@ class TechnicalIndicators {
    * @param {number} signalPeriod - 信号线周期，默认9
    */
   static calculateMACD(prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-    if (prices.length < slowPeriod) return null;
-    
-    const ema12 = this.calculateEMA(prices, fastPeriod);
-    const ema26 = this.calculateEMA(prices, slowPeriod);
-    
-    if (!ema12 || !ema26) return null;
-    
-    const macdLine = new decimal(ema12).minus(ema26);
-    
-    // 计算信号线（MACD的EMA）
-    const macdHistory = [macdLine.toNumber()];
-    const signalLine = this.calculateEMA(macdHistory, signalPeriod) || 0;
-    
-    const histogram = macdLine.minus(signalLine);
-    
+    if (prices.length < slowPeriod + signalPeriod - 1) return null;
+
+    // 计算所有的EMA12和EMA26值
+    const ema12Values = this.calculateEMAArray(prices, fastPeriod);
+    const ema26Values = this.calculateEMAArray(prices, slowPeriod);
+
+    if (!ema12Values || !ema26Values || ema12Values.length === 0 || ema26Values.length === 0) {
+      return null;
+    }
+
+    // 计算MACD线数组
+    const macdValues = [];
+    const minLength = Math.min(ema12Values.length, ema26Values.length);
+
+    for (let i = 0; i < minLength; i++) {
+      const macdValue = new decimal(ema12Values[i]).minus(ema26Values[i]).toNumber();
+      macdValues.push(macdValue);
+    }
+
+    if (macdValues.length < signalPeriod) return null;
+
+    // 计算信号线（MACD线的EMA）
+    const signalValues = this.calculateEMAArray(macdValues, signalPeriod);
+
+    if (!signalValues || signalValues.length === 0) return null;
+
+    // 取最后一个值
+    const macdLine = macdValues[macdValues.length - 1];
+    const signalLine = signalValues[signalValues.length - 1];
+    const histogram = new decimal(macdLine).minus(signalLine).toNumber();
+
     return {
-      macd: macdLine.toNumber(),
+      macd: macdLine,
       signal: signalLine,
-      histogram: histogram.toNumber()
+      histogram: histogram
     };
   }
   
@@ -85,15 +101,38 @@ class TechnicalIndicators {
    */
   static calculateEMA(prices, period) {
     if (prices.length < period) return null;
-    
+
     const multiplier = new decimal(2).dividedBy(period + 1);
     let ema = new decimal(prices[0]);
-    
+
     for (let i = 1; i < prices.length; i++) {
       ema = new decimal(prices[i]).minus(ema).times(multiplier).plus(ema);
     }
-    
+
     return ema.toNumber();
+  }
+
+  /**
+   * 计算EMA指数移动平均数组（返回所有EMA值）
+   * @param {Array} prices - 价格数组
+   * @param {number} period - 周期
+   */
+  static calculateEMAArray(prices, period) {
+    if (prices.length < period) return null;
+
+    const multiplier = new decimal(2).dividedBy(period + 1);
+    const emaArray = [];
+    let ema = new decimal(prices[0]);
+
+    // 第一个值直接使用第一个价格
+    emaArray.push(ema.toNumber());
+
+    for (let i = 1; i < prices.length; i++) {
+      ema = new decimal(prices[i]).minus(ema).times(multiplier).plus(ema);
+      emaArray.push(ema.toNumber());
+    }
+
+    return emaArray;
   }
   
   /**
@@ -572,6 +611,19 @@ class TechnicalIndicators {
    * 计算MACD评分
    */
   static calculateMACDScore(macd) {
+    // 检查MACD数据的有效性
+    if (!macd || typeof macd !== 'object') {
+      return { score: 0, signal: null };
+    }
+
+    if (macd.macd === undefined || macd.signal === undefined || macd.histogram === undefined) {
+      return { score: 0, signal: null };
+    }
+
+    if (isNaN(macd.macd) || isNaN(macd.signal) || isNaN(macd.histogram)) {
+      return { score: 0, signal: null };
+    }
+
     if (macd.macd > macd.signal) {
       const strength = Math.min(Math.abs(macd.histogram) * 10, 15);
       return { score: strength, signal: 'MACD金叉' };

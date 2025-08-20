@@ -2,6 +2,13 @@
 const fs = require('fs');
 const path = require('path');
 const dayjs = require('dayjs');
+const timezone = require('dayjs/plugin/timezone');
+const utc = require('dayjs/plugin/utc');
+
+// 配置dayjs时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.tz.setDefault('Asia/Shanghai');
 
 class HTMLReportGenerator {
   constructor() {
@@ -113,7 +120,7 @@ class HTMLReportGenerator {
 
         <!-- 页脚 -->
         <footer class="footer">
-            <p>📊 ETF轮动策略系统 | 生成时间: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}</p>
+            <p>📊 ETF轮动策略系统 | 生成时间: ${dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss')}</p>
             <p>⚠️ 本报告仅供参考，投资有风险，决策需谨慎</p>
         </footer>
     </div>

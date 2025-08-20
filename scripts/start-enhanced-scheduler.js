@@ -4,6 +4,13 @@
 const ETFScheduler = require('../src/core/scheduler');
 const { CONFIG } = require('../src/core/config');
 const dayjs = require('dayjs');
+const timezone = require('dayjs/plugin/timezone');
+const utc = require('dayjs/plugin/utc');
+
+// 配置dayjs时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.tz.setDefault('Asia/Shanghai');
 const fs = require('fs');
 const PushManager = require('../src/utils/pushManager');
 const pushManager = new PushManager();
@@ -61,6 +68,12 @@ function checkShouldForcePush(now) {
     return false;
   }
 
+  // 检查是否允许非交易时间强制推送
+  const allowNonTradingHours = process.env.ALLOW_NON_TRADING_HOURS === 'true';
+  if (!allowNonTradingHours && pushManager.shouldSuppressLogs(now)) {
+    return false; // 非交易时间且不允许非交易时间推送
+  }
+
   if (!lastForcePushTime) {
     return true; // 首次运行，需要强制推送
   }
@@ -73,6 +86,49 @@ function checkShouldForcePush(now) {
 function updateForcePushTime(now) {
   lastForcePushTime = now.valueOf();
   console.log(color(`🕐 更新强制推送时间: ${now.format('YYYY-MM-DD HH:mm:ss')}`, 'blue'));
+}
+
+// 加载历史报告文件
+async function loadHistoricalReport() {
+  const reportPath = './data/reports/enhanced_etf_report.json';
+  if (!fs.existsSync(reportPath)) {
+    console.log(color('⚠️ 没有找到增强版报告文件，跳过推送', 'yellow'));
+    return null;
+  }
+
+  try {
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    if (!report || !report.data) {
+      console.log(color('⚠️ 报告文件无效，跳过推送', 'yellow'));
+      return null;
+    }
+
+    // 显示历史报告信息
+    const reportTime = dayjs(report.date);
+    const now = dayjs().tz('Asia/Shanghai');
+    const ageMinutes = now.diff(reportTime, 'minute');
+
+    console.log(color(`📄 使用历史报告: ${report.date} (${ageMinutes}分钟前)`, 'gray'));
+    return report;
+  } catch (error) {
+    console.log(color(`❌ 读取报告文件失败: ${error.message}`, 'red'));
+    return null;
+  }
+}
+
+// 更新报告推送时间戳
+function updateReportPushTimestamp(report, isPushTime = false) {
+  const now = dayjs().tz('Asia/Shanghai');
+  const updatedReport = { ...report };
+
+  if (isPushTime) {
+    // 推送时更新推送时间戳，但保留原始生成时间
+    updatedReport.pushTime = now.format('YYYY-MM-DD HH:mm:ss');
+    updatedReport.originalDate = report.date; // 保留原始生成时间
+    console.log(color(`📤 推送时间戳: ${updatedReport.pushTime} (报告生成: ${updatedReport.originalDate})`, 'blue'));
+  }
+
+  return updatedReport;
 }
 
 // 加载价格历史缓存
@@ -147,21 +203,32 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       return;
     }
 
-    // 读取最新的增强版报告文件，避免重复执行策略分析
-    const reportPath = './data/reports/enhanced_etf_report.json';
-    if (!fs.existsSync(reportPath)) {
-      if (!pushManager.shouldSuppressLogs(now)) {
-        console.log(color('⚠️ 没有找到增强版报告文件，跳过推送', 'yellow'));
-      }
-      return;
-    }
+    let report;
 
-    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-    if (!report || !report.data) {
-      if (!pushManager.shouldSuppressLogs(now)) {
-        console.log(color('⚠️ 报告文件无效，跳过推送', 'yellow'));
+    // 强制推送时重新生成报告，确保数据最新
+    if (actualForcePush) {
+      console.log(color('🔄 强制推送：重新生成最新报告...', 'yellow'));
+      try {
+        // 动态导入并执行增强版策略
+        const { runEnhancedStrategy } = require('../enhanced-strategy');
+        report = await runEnhancedStrategy();
+
+        if (!report || !report.data) {
+          console.log(color('⚠️ 强制推送：报告生成失败，跳过推送', 'red'));
+          return;
+        }
+        console.log(color(`✅ 强制推送：报告生成成功，时间: ${report.date}`, 'green'));
+      } catch (error) {
+        console.log(color(`❌ 强制推送：报告生成失败: ${error.message}`, 'red'));
+        // 降级到读取历史报告
+        console.log(color('📄 降级到历史报告...', 'yellow'));
+        report = await loadHistoricalReport();
+        if (!report) return;
       }
-      return;
+    } else {
+      // 常规推送读取历史报告文件，避免重复执行策略分析
+      report = await loadHistoricalReport();
+      if (!report) return;
     }
 
     const buySignals = report.data.filter(d => d.交易信号 && d.交易信号.includes('买入'));
@@ -284,9 +351,12 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
     console.log(color(`✅ 智能推送决策通过: ${pushDecision.reason}`, 'green'));
 
     if (toPush.length > 0) {
+      // 更新报告推送时间戳
+      const reportWithPushTime = updateReportPushTimestamp(report, true);
+
       // 使用增强版策略的推送函数
       const { sendWeChatNotification } = require('../enhanced-strategy');
-      await sendWeChatNotification({ ...report, data: toPush, _simpleContent: pushContent });
+      await sendWeChatNotification({ ...reportWithPushTime, data: toPush, _simpleContent: pushContent });
 
       pushManager.markPushed('wechat', pushContent, [], now);
 
@@ -339,13 +409,17 @@ async function startEnhancedScheduler() {
 
     // 强制推送模式：无论内容是否重复，每30分钟必须执行一次推送
     if (ENABLE_FORCE_PUSH) {
+      const allowNonTradingHours = process.env.ALLOW_NON_TRADING_HOURS === 'true';
       console.log(color('🔥 强制推送模式已开启', 'yellow'));
       console.log(color(`⏰ 将每${FORCE_PUSH_INTERVAL_MINUTES}分钟执行强制推送`, 'gray'));
+      console.log(color(`🕐 非交易时间推送: ${allowNonTradingHours ? '允许' : '禁止'}`, 'gray'));
 
       // 延迟启动强制推送，避免与其他推送冲突
       setTimeout(() => {
         forcePushTimer = setInterval(() => {
+          const now = dayjs().tz('Asia/Shanghai');
           console.log(color(`🔥 强制推送定时器触发 (${FORCE_PUSH_INTERVAL_MINUTES}分钟间隔)`, 'yellow'));
+          console.log(color(`🕐 当前时间: ${now.format('YYYY-MM-DD HH:mm:ss')} (${pushManager.isTradingTime(now) ? '交易时间' : '非交易时间'})`, 'gray'));
           checkAndPushBuyOpportunities(false, true); // isForceInterval = true
         }, FORCE_PUSH_INTERVAL_MINUTES * 60 * 1000);
       }, 45000); // 延迟45秒启动，避免与AUTO推送冲突

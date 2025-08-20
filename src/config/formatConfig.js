@@ -11,7 +11,7 @@ const FORMAT_CONFIG = {
     rsi: { decimals: 1, formatter: 'formatRSI' },
     technicalScore: { decimals: 1, formatter: 'formatTechnicalScore' },
     macd: { decimals: 4, formatter: 'formatMACD' },
-    kdj: { decimals: 1, formatter: 'formatKDJ' },
+    kdj: { decimals: 1, formatter: 'formatKDJValue' }, // 修改为单值格式化器
     atr: { decimals: 2, formatter: 'formatATR' },
     cci: { decimals: 2, formatter: 'formatNumber' },
     williamsR: { decimals: 2, formatter: 'formatNumber' }
