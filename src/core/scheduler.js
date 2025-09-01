@@ -501,7 +501,7 @@ class ETFScheduler {
    */
   _isTradingHours() {
     // 使用PushManager的交易时间判断逻辑，确保一致性
-    const { PushManager } = require('../utils/pushManager');
+    const PushManager = require('../utils/pushManager');
     const pushManager = new PushManager();
     return pushManager.isTradingTime();
   }
