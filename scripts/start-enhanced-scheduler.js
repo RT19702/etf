@@ -70,7 +70,7 @@ function checkShouldForcePush(now) {
 
   // 检查是否允许非交易时间强制推送
   const allowNonTradingHours = process.env.ALLOW_NON_TRADING_HOURS === 'true';
-  if (!allowNonTradingHours && pushManager.shouldSuppressLogs(now)) {
+  if (!allowNonTradingHours && !pushManager.isTradingTime(now)) {
     return false; // 非交易时间且不允许非交易时间推送
   }
 
@@ -197,8 +197,9 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       }
     }
 
-    // 休息期不推送、不打印（强制推送除外）
-    if (pushManager.shouldSuppressLogs(now) && !actualForcePush) {
+    // 非交易时间不推送（强制推送除外）
+    const allowNonTradingHours = process.env.ALLOW_NON_TRADING_HOURS === 'true';
+    if (!allowNonTradingHours && !pushManager.isTradingTime(now) && !actualForcePush) {
       console.log(color('⏰ 非交易时间，跳过AUTO推送', 'gray'));
       return;
     }

@@ -500,27 +500,10 @@ class ETFScheduler {
    * @private
    */
   _isTradingHours() {
-    const now = dayjs();
-    const hour = now.hour();
-    const minute = now.minute();
-    const day = now.day();
-
-    // 周末不是交易时间
-    if (day === 0 || day === 6) {
-      return false;
-    }
-
-    // 上午交易时间: 9:30-11:30
-    if ((hour === 9 && minute >= 30) || hour === 10 || (hour === 11 && minute <= 30)) {
-      return true;
-    }
-
-    // 下午交易时间: 13:00-15:00
-    if (hour === 13 || hour === 14 || (hour === 15 && minute === 0)) {
-      return true;
-    }
-
-    return false;
+    // 使用PushManager的交易时间判断逻辑，确保一致性
+    const { PushManager } = require('../utils/pushManager');
+    const pushManager = new PushManager();
+    return pushManager.isTradingTime();
   }
 
   /**
