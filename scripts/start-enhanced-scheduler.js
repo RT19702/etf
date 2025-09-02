@@ -54,6 +54,7 @@ const ENABLE_AUTO_PUSH = process.env.ENABLE_AUTO_PUSH === 'true'; // 是否启�
 // ====== 强制推送功能 ======
 const FORCE_PUSH_INTERVAL_MINUTES = Number(process.env.FORCE_PUSH_INTERVAL_MINUTES) || 30; // 强制推送间隔（分钟）
 const ENABLE_FORCE_PUSH = process.env.ENABLE_FORCE_PUSH !== 'false'; // 是否启用强制推送（默认启用）
+const FORCE_PUSH_RESPECT_TRADING_HOURS = process.env.FORCE_PUSH_RESPECT_TRADING_HOURS !== 'false'; // 强制推送是否遵守交易时间（默认遵守）
 
 // 价格历史缓存文件路径
 const PRICE_CACHE_FILE = './data/auto_push_price_cache.json';
@@ -414,13 +415,25 @@ async function startEnhancedScheduler() {
       console.log(color('🔥 强制推送模式已开启', 'yellow'));
       console.log(color(`⏰ 将每${FORCE_PUSH_INTERVAL_MINUTES}分钟执行强制推送`, 'gray'));
       console.log(color(`🕐 非交易时间推送: ${allowNonTradingHours ? '允许' : '禁止'}`, 'gray'));
+      console.log(color(`📋 强制推送遵守交易时间: ${FORCE_PUSH_RESPECT_TRADING_HOURS ? '是' : '否'}`, 'gray'));
 
       // 延迟启动强制推送，避免与其他推送冲突
       setTimeout(() => {
         forcePushTimer = setInterval(() => {
           const now = dayjs().tz('Asia/Shanghai');
+          const isTradingTime = pushManager.isTradingTime(now);
+          const allowNonTradingHours = process.env.ALLOW_NON_TRADING_HOURS === 'true';
+
           console.log(color(`🔥 强制推送定时器触发 (${FORCE_PUSH_INTERVAL_MINUTES}分钟间隔)`, 'yellow'));
-          console.log(color(`🕐 当前时间: ${now.format('YYYY-MM-DD HH:mm:ss')} (${pushManager.isTradingTime(now) ? '交易时间' : '非交易时间'})`, 'gray'));
+          console.log(color(`🕐 当前时间: ${now.format('YYYY-MM-DD HH:mm:ss')} (${isTradingTime ? '交易时间' : '非交易时间'})`, 'gray'));
+
+          // 在定时器层面检查是否应该执行强制推送
+          // 如果强制推送需要遵守交易时间，且当前非交易时间，且不允许非交易时间推送，则跳过
+          if (FORCE_PUSH_RESPECT_TRADING_HOURS && !allowNonTradingHours && !isTradingTime) {
+            console.log(color('⏰ 强制推送遵守交易时间限制：非交易时间且未允许非交易时间推送，跳过强制推送', 'gray'));
+            return;
+          }
+
           checkAndPushBuyOpportunities(false, true); // isForceInterval = true
         }, FORCE_PUSH_INTERVAL_MINUTES * 60 * 1000);
       }, 45000); // 延迟45秒启动，避免与AUTO推送冲突
