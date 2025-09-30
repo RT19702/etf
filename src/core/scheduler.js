@@ -285,23 +285,13 @@ class ETFScheduler {
    */
   async _sendWeChatNotification(report, taskName) {
     try {
-      // 判断是否为增强版报告，使用对应的格式化函数
-      let content;
-      if (report.version && report.version.includes('Enhanced')) {
-        // 使用增强版格式化
-        content = this._formatEnhancedWeChatReport(report);
-      } else {
-        // 使用原版格式化
-        content = this.wechatBot.formatETFReport(report);
-      }
+      // 统一使用 enhanced-strategy.js 中的格式化函数
+      const { sendWeChatNotification } = require('../../enhanced-strategy');
 
-      const result = await this.wechatBot.sendMarkdown(content);
+      // 直接调用增强版策略的推送函数，确保格式一致
+      await sendWeChatNotification(report);
 
-      if (result.success) {
-        console.log(`📱 ${taskName} 企业微信通知发送成功`);
-      } else {
-        console.error(`📱 ${taskName} 企业微信通知发送失败: ${result.error}`);
-      }
+      console.log(`📱 ${taskName} 企业微信通知发送成功`);
     } catch (error) {
       console.error(`📱 ${taskName} 企业微信通知发送异常: ${error.message}`);
     }
@@ -310,6 +300,7 @@ class ETFScheduler {
   /**
    * 获取数据源友好名称
    * @private
+   * @deprecated 此函数已废弃，统一使用 enhanced-strategy.js 中的格式化函数
    */
   _getDataSourceName(sourceKey) {
     const sourceNames = {
@@ -318,73 +309,6 @@ class ETFScheduler {
       'backup2': '网易财经'
     };
     return sourceNames[sourceKey] || sourceKey;
-  }
-
-  /**
-   * 格式化增强版企业微信报告
-   * @private
-   */
-  _formatEnhancedWeChatReport(report) {
-    let content = `# 📊 ETF轮动策略\n\n`;
-    content += `**报告时间**: ${report.date}\n\n`;
-
-    // 核心推荐
-    content += `## 🎯 策略推荐\n`;
-    content += `- **推荐操作**: ${report.summary.推荐操作}\n`;
-    content += `- **推荐标的**: ${report.summary.推荐标的}\n`;
-    content += `- **市场趋势**: ${report.summary.市场趋势}\n\n`;
-
-    // 技术分析统计
-    if (report.technicalAnalysis) {
-      content += `## 📈 技术分析统计\n`;
-      content += `- 🔵 强烈买入: ${report.technicalAnalysis.强烈买入}个\n`;
-      content += `- 🟦 买入: ${report.technicalAnalysis.买入}个\n`;
-      content += `- 🟢 持有: ${report.technicalAnalysis.持有}个\n`;
-      content += `- 🟠 卖出: ${report.technicalAnalysis.卖出}个\n`;
-      content += `- ⚠️ 信号矛盾: ${report.technicalAnalysis.信号矛盾}个\n\n`;
-    }
-
-    // 重点关注 - 强烈买入机会
-    const strongBuys = report.data.filter(d => d.交易信号.includes('强烈买入'));
-    if (strongBuys.length > 0) {
-      content += `## 💡 强烈买入机会\n`;
-      strongBuys.forEach(etf => {
-        content += `- **${etf.ETF}** (${etf.代码}): ¥${etf.当前价格}\n`;
-        content += `  - 技术评分: ${etf.技术评分}/100\n`;
-        content += `  - RSI: ${etf.RSI}\n`;
-        content += `  - MACD: ${etf.MACD}\n`;
-        content += `  - 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
-        content += `  - 价格偏离: ${etf.价格偏离}\n`;
-        content += `  - 风险等级: ${etf.风险等级}\n`;
-      });
-      content += `\n`;
-    }
-
-    // 普通买入机会
-    const normalBuys = report.data.filter(d => d.交易信号.includes('买入') && !d.交易信号.includes('强烈买入'));
-    if (normalBuys.length > 0) {
-      content += `## 📈 买入机会\n`;
-      normalBuys.slice(0, 5).forEach(etf => { // 最多显示5个
-        content += `- **${etf.ETF}** (${etf.代码}): ¥${etf.当前价格}\n`;
-        content += `  - 技术评分: ${etf.技术评分}/100\n`;
-        content += `  - 买入价格: ¥${etf.买入阈值} → 目标价格: ¥${etf.卖出阈值}\n`;
-        content += `  - 价格偏离: ${etf.价格偏离}\n`;
-        content += `  - 风险等级: ${etf.风险等级}\n`;
-      });
-      content += `\n`;
-    }
-
-    // 数据源状态
-    if (report.dataSourceStatus) {
-      content += `## 🔗 数据源状态\n`;
-      const currentSourceName = this._getDataSourceName(report.dataSourceStatus.currentSource);
-      content += `当前数据源: ${currentSourceName}\n\n`;
-    }
-
-    content += `---\n`;
-    content += `*增强版报告 - 集成技术指标分析*`;
-
-    return content;
   }
 
   /**

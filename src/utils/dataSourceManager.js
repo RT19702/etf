@@ -109,17 +109,27 @@ class DataSourceManager {
   }
 
   /**
-   * 验证价格数据质量
+   * 验证价格数据质量（优化版）
    * @param {number} price - 价格数据
    * @param {string} symbol - 股票代码
    */
   validatePriceData(price, symbol) {
+    // 基础验证
     if (price === null || price === undefined || isNaN(price)) {
+      console.warn(`价格验证失败: ${symbol} - 价格为空或NaN`);
       return false;
     }
 
-    // 价格合理性检查
-    if (price <= 0 || price > 1000) {
+    // 价格必须为正数
+    if (price <= 0) {
+      console.warn(`价格验证失败: ${symbol} - 价格为负数或零: ${price}`);
+      return false;
+    }
+
+    // 优化：根据ETF类型动态调整价格上限
+    const priceLimit = this.getDynamicPriceLimit(symbol, price);
+    if (price > priceLimit) {
+      console.warn(`价格验证失败: ${symbol} - 价格超过上限: ${price} > ${priceLimit}`);
       return false;
     }
 
@@ -127,13 +137,98 @@ class DataSourceManager {
     const lastValidPrice = this.getLastValidPrice(symbol);
     if (lastValidPrice) {
       const changePercent = Math.abs(price - lastValidPrice) / lastValidPrice;
-      if (changePercent > 0.2) { // 20%的变动阈值
-        console.warn(`价格异常变动: ${symbol} ${lastValidPrice} -> ${price} (${(changePercent * 100).toFixed(2)}%)`);
+
+      // 优化：根据市场波动情况动态调整异常阈值
+      const threshold = this.getDynamicChangeThreshold(symbol, lastValidPrice, price);
+
+      if (changePercent > threshold) {
+        console.warn(`价格异常变动: ${symbol} ${lastValidPrice} -> ${price} (${(changePercent * 100).toFixed(2)}%, 阈值${(threshold * 100).toFixed(2)}%)`);
         return false;
       }
     }
 
     return true;
+  }
+
+  /**
+   * 根据ETF类型动态获取价格上限
+   * @param {string} symbol - 股票代码
+   * @param {number} currentPrice - 当前价格
+   * @returns {number} 价格上限
+   */
+  getDynamicPriceLimit(symbol, currentPrice) {
+    // 大部分ETF价格在0.5-10元之间
+    // 少数宽基指数ETF可能在10-100元
+    // 极少数如黄金ETF可能超过100元
+
+    // 根据历史价格动态调整
+    const lastValidPrice = this.getLastValidPrice(symbol);
+    if (lastValidPrice) {
+      // 如果有历史价格，允许在历史价格基础上有较大波动
+      return Math.max(lastValidPrice * 3, 1000);
+    }
+
+    // 默认上限
+    if (currentPrice < 1) return 10;      // 低价ETF上限10元
+    if (currentPrice < 10) return 50;     // 中价ETF上限50元
+    if (currentPrice < 50) return 200;    // 较高价ETF上限200元
+    return 500;                            // 高价ETF（如黄金）上限500元
+  }
+
+  /**
+   * 根据市场情况动态获取价格变动阈值
+   * @param {string} symbol - 股票代码
+   * @param {number} lastPrice - 上次价格
+   * @param {number} currentPrice - 当前价格
+   * @returns {number} 变动阈值（百分比）
+   */
+  getDynamicChangeThreshold(symbol, lastPrice, currentPrice) {
+    // 基础阈值：20%
+    let threshold = 0.20;
+
+    // 如果价格较低（<1元），允许更大的百分比波动
+    if (lastPrice < 1) {
+      threshold = 0.30; // 30%
+    }
+
+    // 如果是涨跌停板附近（10%），放宽到15%
+    const changePercent = Math.abs(currentPrice - lastPrice) / lastPrice;
+    if (changePercent > 0.095 && changePercent < 0.105) {
+      threshold = 0.15;
+    }
+
+    // 检查是否在交易时间内，交易时间内允许更大波动
+    if (this.isTradingHours()) {
+      threshold *= 1.2; // 交易时间内放宽20%
+    }
+
+    return threshold;
+  }
+
+  /**
+   * 检查是否在交易时间内
+   * @returns {boolean}
+   */
+  isTradingHours() {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const day = now.getDay();
+
+    // 周末不是交易时间
+    if (day === 0 || day === 6) return false;
+
+    // 上午: 9:30-11:30
+    if (hour === 9 && minute >= 30) return true;
+    if (hour === 10) return true;
+    if (hour === 11 && minute <= 30) return true;
+
+    // 下午: 13:00-15:00
+    if (hour === 13) return true;
+    if (hour === 14) return true;
+    if (hour === 15 && minute === 0) return true;
+
+    return false;
   }
 
   /**

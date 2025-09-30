@@ -4,13 +4,11 @@
   "main": "enhanced-strategy.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node enhanced-strategy.js",
-    "auto": "node scripts/start-enhanced-scheduler.js",
+    "start": "node scripts/start-enhanced-scheduler.js",
     "push": "node scripts/manual-push.js",
     "quick-test": "node scripts/quick-test.js",
     "setup-wechat": "node scripts/setup-wechat.js",
-    "verify": "node scripts/verify-features.js",
-    "help": "echo \"Available commands: npm start, npm run auto, npm run push, npm run quick-test, npm run verify\""
+    "verify": "node scripts/verify-features.js"
   },
   "keywords": [],
   "author": "",

@@ -8,11 +8,14 @@ class IntelligentSignalFilter {
       confirmationPeriods: config.confirmationPeriods || 3,
       volumeThreshold: config.volumeThreshold || 1.2,
       priceChangeThreshold: config.priceChangeThreshold || 0.02,
-      signalCooldown: config.signalCooldown || 300000, // 5分钟冷却
+      // 优化：基础冷却期，将根据市场情况动态调整
+      baseCooldown: config.baseCooldown || 300000, // 5分钟基础冷却
+      minCooldown: config.minCooldown || 120000,   // 最小2分钟
+      maxCooldown: config.maxCooldown || 600000,   // 最大10分钟
       maxSignalsPerHour: config.maxSignalsPerHour || 6,
       ...config
     };
-    
+
     this.signalHistory = new Map(); // symbol -> signals[]
     this.lastSignalTime = new Map(); // symbol -> timestamp
     this.hourlySignalCount = new Map(); // hour -> count
@@ -60,12 +63,51 @@ class IntelligentSignalFilter {
     }
   }
   
-  // 检查信号冷却期
-  isInCooldown(symbol) {
+  // 检查信号冷却期（优化版 - 动态调整）
+  isInCooldown(symbol, signalStrength = 0.5, volatility = 'normal') {
     const lastTime = this.lastSignalTime.get(symbol);
     if (!lastTime) return false;
-    
-    return Date.now() - lastTime < this.config.signalCooldown;
+
+    // 优化：根据信号强度和市场波动率动态调整冷却期
+    const dynamicCooldown = this.calculateDynamicCooldown(signalStrength, volatility);
+
+    return Date.now() - lastTime < dynamicCooldown;
+  }
+
+  /**
+   * 计算动态冷却期
+   * @param {number} signalStrength - 信号强度 (0-1)
+   * @param {string} volatility - 市场波动率 ('low', 'normal', 'high')
+   * @returns {number} 冷却期（毫秒）
+   */
+  calculateDynamicCooldown(signalStrength, volatility) {
+    let cooldown = this.config.baseCooldown;
+
+    // 1. 根据信号强度调整
+    // 强信号缩短冷却期，弱信号延长冷却期
+    if (signalStrength > 0.8) {
+      cooldown *= 0.6; // 强信号：减少40%冷却时间
+    } else if (signalStrength > 0.6) {
+      cooldown *= 0.8; // 中强信号：减少20%冷却时间
+    } else if (signalStrength < 0.3) {
+      cooldown *= 1.5; // 弱信号：增加50%冷却时间
+    }
+
+    // 2. 根据市场波动率调整
+    switch (volatility) {
+      case 'high':
+        cooldown *= 1.3; // 高波动：延长30%冷却时间
+        break;
+      case 'low':
+        cooldown *= 0.8; // 低波动：缩短20%冷却时间
+        break;
+      // 'normal' 不调整
+    }
+
+    // 3. 限制在合理范围内
+    cooldown = Math.max(this.config.minCooldown, Math.min(cooldown, this.config.maxCooldown));
+
+    return cooldown;
   }
   
   // 检查每小时信号限制
@@ -159,52 +201,67 @@ class IntelligentSignalFilter {
     };
   }
   
-  // 主要过滤函数
+  // 主要过滤函数（优化版）
   filterSignal(symbol, signal, price, volume, marketData = null) {
     // 更新市场条件
     if (marketData) {
       this.updateMarketConditions(marketData);
     }
-    
+
     // 添加信号到历史
     this.addSignal(symbol, signal, price, volume);
-    
-    // 基础检查
+
+    // 分析信号质量（提前计算，用于动态冷却期）
+    const analysis = this.analyzeSignalConsistency(symbol);
+
+    // 基础检查（优化：使用动态冷却期）
     const checks = {
-      cooldown: !this.isInCooldown(symbol),
+      cooldown: !this.isInCooldown(symbol, analysis.strength, this.marketConditions.volatility),
       hourlyLimit: this.checkHourlyLimit(),
       marketCondition: this.checkMarketCondition(signal),
-      signalQuality: true // 将在下面计算
+      signalQuality: analysis.consistent && analysis.strength > 0.5
     };
-    
-    // 分析信号质量
-    const analysis = this.analyzeSignalConsistency(symbol);
-    checks.signalQuality = analysis.consistent && analysis.strength > 0.5;
-    
+
     // 特殊市场条件下的额外过滤
     if (this.marketConditions.volatility === 'high') {
       checks.volatilityFilter = analysis.strength > 0.7; // 高波动时要求更高确认度
     } else {
       checks.volatilityFilter = true;
     }
-    
+
     const shouldExecute = Object.values(checks).every(check => check);
-    
-    // 记录过滤结果
+
+    // 记录过滤结果（优化：包含动态冷却期信息）
     this.logFilterResult(symbol, signal, checks, analysis, shouldExecute);
-    
+
     if (shouldExecute) {
       this.lastSignalTime.set(symbol, Date.now());
       this.updateHourlyCount();
     }
-    
+
     return {
       execute: shouldExecute,
       confidence: analysis.strength,
       pattern: analysis.pattern,
       checks,
-      analysis
+      analysis,
+      // 优化：返回下次可执行时间
+      nextAvailableTime: shouldExecute ? null : this.getNextAvailableTime(symbol, analysis.strength)
     };
+  }
+
+  /**
+   * 获取下次可执行信号的时间
+   * @param {string} symbol - 股票代码
+   * @param {number} signalStrength - 信号强度
+   * @returns {number|null} 时间戳
+   */
+  getNextAvailableTime(symbol, signalStrength) {
+    const lastTime = this.lastSignalTime.get(symbol);
+    if (!lastTime) return null;
+
+    const cooldown = this.calculateDynamicCooldown(signalStrength, this.marketConditions.volatility);
+    return lastTime + cooldown;
   }
   
   // 检查市场条件适合性

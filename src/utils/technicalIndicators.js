@@ -9,43 +9,73 @@ class TechnicalIndicators {
    * @param {number} period - 计算周期，默认14
    */
   static calculateRSI(prices, period = 14) {
-    if (prices.length < period + 1) return null;
-    
-    const changes = [];
-    for (let i = 1; i < prices.length; i++) {
-      changes.push(new decimal(prices[i]).minus(prices[i - 1]));
-    }
-    
-    let avgGain = new decimal(0);
-    let avgLoss = new decimal(0);
-    
-    // 计算初始平均涨跌幅
-    for (let i = 0; i < period; i++) {
-      if (changes[i].gt(0)) {
-        avgGain = avgGain.plus(changes[i]);
-      } else {
-        avgLoss = avgLoss.plus(changes[i].abs());
+    // 优化：增加数据验证和异常处理
+    try {
+      // 验证输入参数
+      if (!prices || !Array.isArray(prices) || prices.length === 0) {
+        console.warn('RSI计算失败: 价格数组为空或无效');
+        return null;
       }
+
+      if (prices.length < period + 1) {
+        console.warn(`RSI计算失败: 数据不足 (需要${period + 1}天，实际${prices.length}天)`);
+        return null;
+      }
+
+      // 验证价格数据有效性
+      const validPrices = prices.every(p => p !== null && p !== undefined && !isNaN(p) && p > 0);
+      if (!validPrices) {
+        console.warn('RSI计算失败: 价格数据包含无效值');
+        return null;
+      }
+
+      const changes = [];
+      for (let i = 1; i < prices.length; i++) {
+        changes.push(new decimal(prices[i]).minus(prices[i - 1]));
+      }
+
+      let avgGain = new decimal(0);
+      let avgLoss = new decimal(0);
+
+      // 计算初始平均涨跌幅
+      for (let i = 0; i < period; i++) {
+        if (changes[i].gt(0)) {
+          avgGain = avgGain.plus(changes[i]);
+        } else {
+          avgLoss = avgLoss.plus(changes[i].abs());
+        }
+      }
+
+      avgGain = avgGain.dividedBy(period);
+      avgLoss = avgLoss.dividedBy(period);
+
+      // 计算最新RSI
+      for (let i = period; i < changes.length; i++) {
+        const gain = changes[i].gt(0) ? changes[i] : new decimal(0);
+        const loss = changes[i].lt(0) ? changes[i].abs() : new decimal(0);
+
+        avgGain = avgGain.times(period - 1).plus(gain).dividedBy(period);
+        avgLoss = avgLoss.times(period - 1).plus(loss).dividedBy(period);
+      }
+
+      if (avgLoss.eq(0)) return 100;
+
+      const rs = avgGain.dividedBy(avgLoss);
+      const rsi = new decimal(100).minus(new decimal(100).dividedBy(rs.plus(1)));
+
+      const result = rsi.toNumber();
+
+      // 验证结果有效性
+      if (isNaN(result) || result < 0 || result > 100) {
+        console.warn(`RSI计算结果异常: ${result}`);
+        return null;
+      }
+
+      return result;
+    } catch (error) {
+      console.error('RSI计算异常:', error.message);
+      return null;
     }
-    
-    avgGain = avgGain.dividedBy(period);
-    avgLoss = avgLoss.dividedBy(period);
-    
-    // 计算最新RSI
-    for (let i = period; i < changes.length; i++) {
-      const gain = changes[i].gt(0) ? changes[i] : new decimal(0);
-      const loss = changes[i].lt(0) ? changes[i].abs() : new decimal(0);
-      
-      avgGain = avgGain.times(period - 1).plus(gain).dividedBy(period);
-      avgLoss = avgLoss.times(period - 1).plus(loss).dividedBy(period);
-    }
-    
-    if (avgLoss.eq(0)) return 100;
-    
-    const rs = avgGain.dividedBy(avgLoss);
-    const rsi = new decimal(100).minus(new decimal(100).dividedBy(rs.plus(1)));
-    
-    return rsi.toNumber();
   }
   
   /**
@@ -56,42 +86,78 @@ class TechnicalIndicators {
    * @param {number} signalPeriod - 信号线周期，默认9
    */
   static calculateMACD(prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-    if (prices.length < slowPeriod + signalPeriod - 1) return null;
+    // 优化：增加数据验证和异常处理
+    try {
+      // 验证输入参数
+      if (!prices || !Array.isArray(prices) || prices.length === 0) {
+        console.warn('MACD计算失败: 价格数组为空或无效');
+        return null;
+      }
 
-    // 计算所有的EMA12和EMA26值
-    const ema12Values = this.calculateEMAArray(prices, fastPeriod);
-    const ema26Values = this.calculateEMAArray(prices, slowPeriod);
+      const minRequired = slowPeriod + signalPeriod - 1;
+      if (prices.length < minRequired) {
+        console.warn(`MACD计算失败: 数据不足 (需要${minRequired}天，实际${prices.length}天)`);
+        return null;
+      }
 
-    if (!ema12Values || !ema26Values || ema12Values.length === 0 || ema26Values.length === 0) {
+      // 验证价格数据有效性
+      const validPrices = prices.every(p => p !== null && p !== undefined && !isNaN(p) && p > 0);
+      if (!validPrices) {
+        console.warn('MACD计算失败: 价格数据包含无效值');
+        return null;
+      }
+
+      // 计算所有的EMA12和EMA26值
+      const ema12Values = this.calculateEMAArray(prices, fastPeriod);
+      const ema26Values = this.calculateEMAArray(prices, slowPeriod);
+
+      if (!ema12Values || !ema26Values || ema12Values.length === 0 || ema26Values.length === 0) {
+        console.warn('MACD计算失败: EMA计算返回空值');
+        return null;
+      }
+
+      // 计算MACD线数组
+      const macdValues = [];
+      const minLength = Math.min(ema12Values.length, ema26Values.length);
+
+      for (let i = 0; i < minLength; i++) {
+        const macdValue = new decimal(ema12Values[i]).minus(ema26Values[i]).toNumber();
+        macdValues.push(macdValue);
+      }
+
+      if (macdValues.length < signalPeriod) {
+        console.warn(`MACD计算失败: MACD值不足以计算信号线 (需要${signalPeriod}，实际${macdValues.length})`);
+        return null;
+      }
+
+      // 计算信号线（MACD线的EMA）
+      const signalValues = this.calculateEMAArray(macdValues, signalPeriod);
+
+      if (!signalValues || signalValues.length === 0) {
+        console.warn('MACD计算失败: 信号线计算返回空值');
+        return null;
+      }
+
+      // 取最后一个值
+      const macdLine = macdValues[macdValues.length - 1];
+      const signalLine = signalValues[signalValues.length - 1];
+      const histogram = new decimal(macdLine).minus(signalLine).toNumber();
+
+      // 验证结果有效性
+      if (isNaN(macdLine) || isNaN(signalLine) || isNaN(histogram)) {
+        console.warn('MACD计算结果包含NaN值');
+        return null;
+      }
+
+      return {
+        macd: macdLine,
+        signal: signalLine,
+        histogram: histogram
+      };
+    } catch (error) {
+      console.error('MACD计算异常:', error.message);
       return null;
     }
-
-    // 计算MACD线数组
-    const macdValues = [];
-    const minLength = Math.min(ema12Values.length, ema26Values.length);
-
-    for (let i = 0; i < minLength; i++) {
-      const macdValue = new decimal(ema12Values[i]).minus(ema26Values[i]).toNumber();
-      macdValues.push(macdValue);
-    }
-
-    if (macdValues.length < signalPeriod) return null;
-
-    // 计算信号线（MACD线的EMA）
-    const signalValues = this.calculateEMAArray(macdValues, signalPeriod);
-
-    if (!signalValues || signalValues.length === 0) return null;
-
-    // 取最后一个值
-    const macdLine = macdValues[macdValues.length - 1];
-    const signalLine = signalValues[signalValues.length - 1];
-    const histogram = new decimal(macdLine).minus(signalLine).toNumber();
-
-    return {
-      macd: macdLine,
-      signal: signalLine,
-      histogram: histogram
-    };
   }
   
   /**
@@ -142,24 +208,52 @@ class TechnicalIndicators {
    * @param {number} stdDev - 标准差倍数，默认2
    */
   static calculateBollingerBands(prices, period = 20, stdDev = 2) {
-    if (prices.length < period) return null;
-    
-    const recentPrices = prices.slice(-period);
-    const sma = recentPrices.reduce((sum, price) => sum + price, 0) / period;
-    
-    // 计算标准差
-    const variance = recentPrices.reduce((sum, price) => {
-      return sum + Math.pow(price - sma, 2);
-    }, 0) / period;
-    
-    const standardDeviation = Math.sqrt(variance);
-    
-    return {
-      upper: sma + (standardDeviation * stdDev),
-      middle: sma,
-      lower: sma - (standardDeviation * stdDev),
-      bandwidth: (standardDeviation * stdDev * 2) / sma * 100
-    };
+    // 优化：增加数据验证和异常处理
+    try {
+      if (!prices || !Array.isArray(prices) || prices.length === 0) {
+        console.warn('布林带计算失败: 价格数组为空或无效');
+        return null;
+      }
+
+      if (prices.length < period) {
+        console.warn(`布林带计算失败: 数据不足 (需要${period}天，实际${prices.length}天)`);
+        return null;
+      }
+
+      const recentPrices = prices.slice(-period);
+
+      // 验证价格数据有效性
+      const validPrices = recentPrices.every(p => p !== null && p !== undefined && !isNaN(p) && p > 0);
+      if (!validPrices) {
+        console.warn('布林带计算失败: 价格数据包含无效值');
+        return null;
+      }
+
+      const sma = recentPrices.reduce((sum, price) => sum + price, 0) / period;
+
+      // 计算标准差
+      const variance = recentPrices.reduce((sum, price) => {
+        return sum + Math.pow(price - sma, 2);
+      }, 0) / period;
+
+      const standardDeviation = Math.sqrt(variance);
+
+      // 验证计算结果
+      if (isNaN(sma) || isNaN(standardDeviation) || sma <= 0) {
+        console.warn('布林带计算结果异常');
+        return null;
+      }
+
+      return {
+        upper: sma + (standardDeviation * stdDev),
+        middle: sma,
+        lower: sma - (standardDeviation * stdDev),
+        bandwidth: (standardDeviation * stdDev * 2) / sma * 100
+      };
+    } catch (error) {
+      console.error('布林带计算异常:', error.message);
+      return null;
+    }
   }
   
   /**
@@ -201,13 +295,31 @@ class TechnicalIndicators {
    * @param {number} m2 - D值平滑参数，默认3
    */
   static calculateKDJ(highs, lows, closes, period = 9, m1 = 3, m2 = 3) {
-    if (!highs || !lows || !closes || highs.length < period ||
-        lows.length < period || closes.length < period) {
+    // 优化：增强数据验证
+    if (!highs || !lows || !closes ||
+        !Array.isArray(highs) || !Array.isArray(lows) || !Array.isArray(closes)) {
+      console.warn('KDJ计算失败: 输入数组无效');
+      return null;
+    }
+
+    if (highs.length < period || lows.length < period || closes.length < period) {
+      console.warn(`KDJ计算失败: 数据不足 (需要${period}天)`);
       return null;
     }
 
     try {
       const length = Math.min(highs.length, lows.length, closes.length);
+
+      // 验证数据有效性
+      const validHighs = highs.slice(0, length).every(h => h !== null && h !== undefined && !isNaN(h) && h > 0);
+      const validLows = lows.slice(0, length).every(l => l !== null && l !== undefined && !isNaN(l) && l > 0);
+      const validCloses = closes.slice(0, length).every(c => c !== null && c !== undefined && !isNaN(c) && c > 0);
+
+      if (!validHighs || !validLows || !validCloses) {
+        console.warn('KDJ计算失败: 价格数据包含无效值');
+        return null;
+      }
+
       const rsvs = [];
 
       // 计算RSV值
@@ -225,7 +337,10 @@ class TechnicalIndicators {
         rsvs.push(rsv);
       }
 
-      if (rsvs.length === 0) return null;
+      if (rsvs.length === 0) {
+        console.warn('KDJ计算失败: RSV计算结果为空');
+        return null;
+      }
 
       // 计算K值（RSV的移动平均）
       let k = 50; // 初始K值
@@ -245,14 +360,24 @@ class TechnicalIndicators {
         jValues.push(j);
       }
 
+      const finalK = kValues[kValues.length - 1];
+      const finalD = dValues[dValues.length - 1];
+      const finalJ = jValues[jValues.length - 1];
+
+      // 验证结果有效性
+      if (isNaN(finalK) || isNaN(finalD) || isNaN(finalJ)) {
+        console.warn('KDJ计算结果包含NaN值');
+        return null;
+      }
+
       return {
-        k: new decimal(kValues[kValues.length - 1]).toFixed(2),
-        d: new decimal(dValues[dValues.length - 1]).toFixed(2),
-        j: new decimal(jValues[jValues.length - 1]).toFixed(2),
-        signal: this.getKDJSignal(kValues[kValues.length - 1], dValues[dValues.length - 1], jValues[jValues.length - 1])
+        k: new decimal(finalK).toFixed(2),
+        d: new decimal(finalD).toFixed(2),
+        j: new decimal(finalJ).toFixed(2),
+        signal: this.getKDJSignal(finalK, finalD, finalJ)
       };
     } catch (error) {
-      console.error('KDJ计算错误:', error);
+      console.error('KDJ计算异常:', error.message);
       return null;
     }
   }
@@ -351,13 +476,31 @@ class TechnicalIndicators {
    * @param {number} period - 计算周期，默认14
    */
   static calculateATR(highs, lows, closes, period = 14) {
-    if (!highs || !lows || !closes || highs.length < period + 1 ||
-        lows.length < period + 1 || closes.length < period + 1) {
+    // 优化：增强数据验证
+    if (!highs || !lows || !closes ||
+        !Array.isArray(highs) || !Array.isArray(lows) || !Array.isArray(closes)) {
+      console.warn('ATR计算失败: 输入数组无效');
+      return null;
+    }
+
+    if (highs.length < period + 1 || lows.length < period + 1 || closes.length < period + 1) {
+      console.warn(`ATR计算失败: 数据不足 (需要${period + 1}天)`);
       return null;
     }
 
     try {
       const length = Math.min(highs.length, lows.length, closes.length);
+
+      // 验证数据有效性
+      const validHighs = highs.slice(0, length).every(h => h !== null && h !== undefined && !isNaN(h) && h > 0);
+      const validLows = lows.slice(0, length).every(l => l !== null && l !== undefined && !isNaN(l) && l > 0);
+      const validCloses = closes.slice(0, length).every(c => c !== null && c !== undefined && !isNaN(c) && c > 0);
+
+      if (!validHighs || !validLows || !validCloses) {
+        console.warn('ATR计算失败: 价格数据包含无效值');
+        return null;
+      }
+
       const trueRanges = [];
 
       // 计算真实波动幅度
@@ -370,16 +513,36 @@ class TechnicalIndicators {
         trueRanges.push(tr);
       }
 
+      if (trueRanges.length < period) {
+        console.warn('ATR计算失败: 真实波动幅度数据不足');
+        return null;
+      }
+
       // 计算ATR（真实波动幅度的移动平均）
       const recentTRs = trueRanges.slice(trueRanges.length - period, trueRanges.length);
       const atr = recentTRs.reduce((sum, tr) => sum + tr, 0) / period;
 
+      // 验证结果有效性
+      if (isNaN(atr) || atr < 0) {
+        console.warn('ATR计算结果异常');
+        return null;
+      }
+
+      const currentClose = closes[length - 1];
+      if (currentClose <= 0) {
+        console.warn('ATR百分比计算失败: 当前收盘价无效');
+        return {
+          value: new decimal(atr).toFixed(4),
+          percentage: 'N/A'
+        };
+      }
+
       return {
         value: new decimal(atr).toFixed(4),
-        percentage: new decimal((atr / closes[length - 1]) * 100).toFixed(2)
+        percentage: new decimal((atr / currentClose) * 100).toFixed(2)
       };
     } catch (error) {
-      console.error('ATR计算错误:', error);
+      console.error('ATR计算异常:', error.message);
       return null;
     }
   }

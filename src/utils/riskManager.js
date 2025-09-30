@@ -81,14 +81,18 @@ class RiskManager {
     return '未知原因';
   }
   
-  // 开仓（增强版）
+  // 开仓（优化版 - 简化止损逻辑）
   openPosition(symbol, size, price, signal, technicalData = {}) {
     if (!this.canOpenPosition(symbol, size, price, '1.0%')) {
       return false;
     }
 
-    // 计算动态止损价格
-    const dynamicStopLoss = this.calculateDynamicStopLoss(price, technicalData);
+    // 优化：简化为3种核心止损方式
+    // 1. 固定止损（基础保护）
+    // 2. 追踪止损（保护利润）
+    // 3. 技术止损（基于ATR或布林带，可选）
+
+    const stopLossConfig = this.calculateSimplifiedStopLoss(price, technicalData);
 
     const position = {
       symbol,
@@ -96,25 +100,21 @@ class RiskManager {
       entryPrice: price,
       entryTime: Date.now(),
       signal,
-      // 多种止损方式
-      fixedStopLoss: price * (1 - this.config.stopLossPercent),
-      trailingStopLoss: price * (1 - this.config.trailingStopPercent),
-      technicalStopLoss: dynamicStopLoss.technical,
-      atrStopLoss: dynamicStopLoss.atr,
-      timeStopLoss: Date.now() + (this.config.timeStopHours * 60 * 60 * 1000),
-      // 当前生效的止损价格
-      currentStopLoss: Math.max(
-        price * (1 - this.config.stopLossPercent),
-        dynamicStopLoss.technical || 0,
-        dynamicStopLoss.atr || 0
-      ),
+      // 简化的止损配置
+      fixedStopLoss: stopLossConfig.fixed,
+      trailingStopLoss: stopLossConfig.trailing,
+      technicalStopLoss: stopLossConfig.technical, // 可选
+      // 当前生效的止损价格（初始为固定止损）
+      currentStopLoss: stopLossConfig.initial,
+      stopLossType: stopLossConfig.type,
+      // 止盈配置
       takeProfit: price * (1 + this.config.takeProfitPercent),
+      // 价格追踪
       maxPrice: price,
       minPrice: price,
-      // 技术数据
+      // 技术数据（用于后续更新）
       technicalData: technicalData,
-      // 止损类型记录
-      stopLossType: 'fixed',
+      // 止损更新历史（简化）
       stopLossUpdates: []
     };
 
@@ -122,16 +122,57 @@ class RiskManager {
     this.dailyTrades++;
 
     this.logRiskEvent('POSITION_OPENED', {
-      ...position,
-      stopLossBreakdown: {
+      symbol,
+      size,
+      entryPrice: price,
+      stopLoss: {
         fixed: position.fixedStopLoss,
         trailing: position.trailingStopLoss,
         technical: position.technicalStopLoss,
-        atr: position.atrStopLoss,
-        current: position.currentStopLoss
-      }
+        current: position.currentStopLoss,
+        type: position.stopLossType
+      },
+      takeProfit: position.takeProfit
     });
     return true;
+  }
+
+  /**
+   * 计算简化的止损配置（优化版）
+   * @param {number} price - 入场价格
+   * @param {Object} technicalData - 技术指标数据
+   * @returns {Object} 止损配置
+   */
+  calculateSimplifiedStopLoss(price, technicalData = {}) {
+    const config = {
+      fixed: price * (1 - this.config.stopLossPercent),
+      trailing: price * (1 - this.config.trailingStopPercent),
+      technical: null,
+      initial: null,
+      type: 'fixed'
+    };
+
+    // 如果启用技术止损且有ATR数据，使用ATR止损
+    if (this.config.technicalStopEnabled && technicalData.atr && technicalData.atr.value) {
+      const atrValue = parseFloat(technicalData.atr.value);
+      const atrStopLoss = price - (atrValue * this.config.atrMultiplier);
+
+      // 技术止损不能低于固定止损（保持最低保护）
+      if (atrStopLoss > config.fixed) {
+        config.technical = atrStopLoss;
+      }
+    }
+
+    // 选择初始止损：优先使用技术止损（如果更优），否则使用固定止损
+    if (config.technical && config.technical > config.fixed) {
+      config.initial = config.technical;
+      config.type = 'technical';
+    } else {
+      config.initial = config.fixed;
+      config.type = 'fixed';
+    }
+
+    return config;
   }
   
   // 平仓
@@ -367,7 +408,7 @@ class RiskManager {
   }
 
   /**
-   * 更新动态止损价格
+   * 更新动态止损价格（优化版 - 简化逻辑）
    * @param {Object} position - 持仓对象
    * @param {number} currentPrice - 当前价格
    * @param {Object} technicalData - 技术指标数据
@@ -377,81 +418,63 @@ class RiskManager {
     position.maxPrice = Math.max(position.maxPrice, currentPrice);
     position.minPrice = Math.min(position.minPrice, currentPrice);
 
-    // 计算追踪止损
+    const oldStopLoss = position.currentStopLoss;
+    const oldType = position.stopLossType;
+
+    // 1. 更新追踪止损（基于最高价）
     const newTrailingStop = position.maxPrice * (1 - this.config.trailingStopPercent);
     if (newTrailingStop > position.trailingStopLoss) {
       position.trailingStopLoss = newTrailingStop;
-      position.stopLossUpdates.push({
-        time: Date.now(),
-        type: 'trailing',
-        price: newTrailingStop,
-        currentPrice
-      });
     }
 
-    // 更新技术止损
-    if (this.config.technicalStopEnabled && technicalData) {
-      const dynamicStops = this.calculateDynamicStopLoss(currentPrice, technicalData);
+    // 2. 更新技术止损（如果启用）
+    if (this.config.technicalStopEnabled && technicalData.atr && technicalData.atr.value) {
+      const atrValue = parseFloat(technicalData.atr.value);
+      const newTechnicalStop = currentPrice - (atrValue * this.config.atrMultiplier);
 
-      // 更新技术止损
-      if (dynamicStops.technical &&
-          (!position.technicalStopLoss || dynamicStops.technical > position.technicalStopLoss)) {
-        position.technicalStopLoss = dynamicStops.technical;
-        position.stopLossUpdates.push({
-          time: Date.now(),
-          type: 'technical',
-          price: dynamicStops.technical,
-          currentPrice
-        });
-      }
-
-      // 更新ATR止损
-      if (dynamicStops.atr &&
-          (!position.atrStopLoss || dynamicStops.atr > position.atrStopLoss)) {
-        position.atrStopLoss = dynamicStops.atr;
-        position.stopLossUpdates.push({
-          time: Date.now(),
-          type: 'atr',
-          price: dynamicStops.atr,
-          currentPrice
-        });
+      // 技术止损只能上移，不能下移
+      if (newTechnicalStop > (position.technicalStopLoss || 0)) {
+        position.technicalStopLoss = newTechnicalStop;
       }
     }
 
-    // 确定当前最佳止损价格
-    const newStopLoss = Math.max(
-      position.fixedStopLoss || 0,
-      position.trailingStopLoss || 0,
-      position.technicalStopLoss || 0,
-      position.atrStopLoss || 0
+    // 3. 选择最优止损价格（三者取最大）
+    const candidates = [
+      { price: position.fixedStopLoss, type: 'fixed' },
+      { price: position.trailingStopLoss, type: 'trailing' },
+      { price: position.technicalStopLoss || 0, type: 'technical' }
+    ];
+
+    const bestStopLoss = candidates.reduce((best, current) =>
+      current.price > best.price ? current : best
     );
 
-    // 如果有更好的止损价格，更新当前止损
-    if (newStopLoss > position.currentStopLoss) {
-      const oldType = position.stopLossType;
+    // 4. 更新当前止损（止损只能上移，不能下移）
+    if (bestStopLoss.price > position.currentStopLoss) {
+      position.currentStopLoss = bestStopLoss.price;
+      position.stopLossType = bestStopLoss.type;
 
-      // 确定新的止损类型
-      if (newStopLoss === position.trailingStopLoss) {
-        position.stopLossType = 'trailing';
-      } else if (newStopLoss === position.technicalStopLoss) {
-        position.stopLossType = 'technical';
-      } else if (newStopLoss === position.atrStopLoss) {
-        position.stopLossType = 'atr';
-      } else {
-        position.stopLossType = 'fixed';
+      // 记录重要的止损更新
+      if (bestStopLoss.price > oldStopLoss * 1.01) { // 只记录1%以上的变化
+        position.stopLossUpdates.push({
+          time: Date.now(),
+          oldPrice: oldStopLoss,
+          newPrice: bestStopLoss.price,
+          oldType,
+          newType: bestStopLoss.type,
+          currentPrice
+        });
+
+        this.logRiskEvent('STOP_LOSS_UPDATED', {
+          symbol: position.symbol,
+          oldStopLoss,
+          newStopLoss: bestStopLoss.price,
+          oldType,
+          newType: bestStopLoss.type,
+          currentPrice,
+          improvement: ((bestStopLoss.price - oldStopLoss) / oldStopLoss * 100).toFixed(2) + '%'
+        });
       }
-
-      position.currentStopLoss = newStopLoss;
-
-      // 记录止损更新
-      this.logRiskEvent('STOP_LOSS_UPDATED', {
-        symbol: position.symbol,
-        oldStopLoss: position.currentStopLoss,
-        newStopLoss,
-        oldType,
-        newType: position.stopLossType,
-        currentPrice
-      });
     }
   }
 
