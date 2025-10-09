@@ -107,7 +107,7 @@ class PolicyTrendAnalyzer {
    */
   identifyFavorableThemes(sectorRotation) {
     const themes = [];
-    const { strongSectors, capitalFlow } = sectorRotation;
+    const { strongSectors = [], capitalFlow = {} } = sectorRotation || {};
     
     for (const [themeName, themeData] of Object.entries(this.policyThemes)) {
       let themeScore = 0;
@@ -126,9 +126,9 @@ class PolicyTrendAnalyzer {
       }
       
       // 检查是否有资金流入
-      const hasCapitalInflow = capitalFlow.inflowSectors.some(s => 
+      const hasCapitalInflow = capitalFlow.inflowSectors?.some(s => 
         themeData.sectors.includes(s.sector)
-      );
+      ) || false;
       
       if (hasCapitalInflow) {
         themeScore *= 1.2;

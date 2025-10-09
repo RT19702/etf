@@ -22,10 +22,17 @@ class DataSourceManager {
         status: 'active'
       },
       backup2: {
-        name: '网易财经',
-        realtime: 'https://api.money.126.net/data/feed/',
-        kline: 'https://img1.money.126.net/data/hs/kline/day/history/',
+        name: '东方财富',
+        realtime: 'https://push2.eastmoney.com/api/qt/stock/get',
+        kline: 'https://push2his.eastmoney.com/api/qt/stock/kline/get',
         priority: 3,
+        status: 'active'
+      },
+      backup3: {
+        name: '同花顺',
+        realtime: 'https://d.10jqka.com.cn/v6/line/hs_',
+        kline: 'https://d.10jqka.com.cn/v6/line/hs_',
+        priority: 4,
         status: 'active'
       }
     };
@@ -126,10 +133,10 @@ class DataSourceManager {
       return false;
     }
 
-    // 优化：根据ETF类型动态调整价格上限
-    const priceLimit = this.getDynamicPriceLimit(symbol, price);
-    if (price > priceLimit) {
-      console.warn(`价格验证失败: ${symbol} - 价格超过上限: ${price} > ${priceLimit}`);
+    // 优化：根据ETF类型动态调整价格范围
+    const priceRange = this.getPriceRange(symbol);
+    if (price < priceRange.min || price > priceRange.max) {
+      console.warn(`价格验证失败: ${symbol} - 价格超出合理范围: ${price} (范围: ${priceRange.min}-${priceRange.max})`);
       return false;
     }
 
@@ -151,7 +158,32 @@ class DataSourceManager {
   }
 
   /**
-   * 根据ETF类型动态获取价格上限
+   * 获取ETF价格合理范围
+   * @param {string} symbol - 股票代码
+   * @returns {Object} 价格范围 {min, max}
+   */
+  getPriceRange(symbol) {
+    // 根据ETF类型设置不同的价格范围
+    if (symbol.includes('510050') || symbol.includes('510300')) {
+      // 大盘ETF，价格通常在1-10元
+      return { min: 0.5, max: 15.0 };
+    } else if (symbol.includes('510500') || symbol.includes('512100')) {
+      // 中盘ETF，价格通常在5-20元
+      return { min: 2.0, max: 25.0 };
+    } else if (symbol.includes('512880') || symbol.includes('515050')) {
+      // 行业ETF，价格范围较广
+      return { min: 0.1, max: 50.0 };
+    } else if (symbol.includes('518880') || symbol.includes('588000')) {
+      // 商品ETF，价格可能较高
+      return { min: 0.1, max: 100.0 };
+    } else {
+      // 默认范围
+      return { min: 0.1, max: 50.0 };
+    }
+  }
+
+  /**
+   * 根据ETF类型动态获取价格上限（保留兼容性）
    * @param {string} symbol - 股票代码
    * @param {number} currentPrice - 当前价格
    * @returns {number} 价格上限
@@ -299,7 +331,9 @@ class DataSourceManager {
       case 'backup1':
         return this.fetchFromSina(symbol);
       case 'backup2':
-        return this.fetchFromNetease(symbol);
+        return this.fetchFromEastmoney(symbol);
+      case 'backup3':
+        return this.fetchFromTonghuashun(symbol);
       default:
         throw new Error(`未知数据源: ${sourceKey}`);
     }
@@ -345,21 +379,66 @@ class DataSourceManager {
   }
   
   /**
-   * 从网易财经获取数据
+   * 从东方财富获取实时价格
    * @param {string} symbol - 股票代码
    */
-  async fetchFromNetease(symbol) {
-    // 网易财经API实现
-    const neteaseSymbol = this.convertToNeteaseFormat(symbol);
-    const response = await axios.get(`${this.dataSources.backup2.realtime}${neteaseSymbol}`, {
-      timeout: 10000
-    });
-    
-    if (response.data && response.data.price) {
-      return parseFloat(response.data.price);
+  async fetchFromEastmoney(symbol) {
+    try {
+      // 使用简化的东方财富API
+      const secid = this.convertSymbolToSecid(symbol);
+      const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55,f56,f57,f58`;
+      
+      const response = await axios.get(url, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://quote.eastmoney.com/',
+          'Accept': 'application/json, text/plain, */*'
+        }
+      });
+      
+      if (response.data && response.data.data && response.data.data.f58) {
+        const price = parseFloat(response.data.data.f58);
+        return isNaN(price) ? null : price;
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn(`东方财富实时价格获取失败: ${error.message}`);
+      return null;
     }
-    
-    return null;
+  }
+
+  /**
+   * 从同花顺获取实时价格
+   * @param {string} symbol - 股票代码
+   */
+  async fetchFromTonghuashun(symbol) {
+    try {
+      // 使用同花顺的简化API
+      const url = `https://d.10jqka.com.cn/v6/line/hs_${symbol}/01.js`;
+      
+      const response = await axios.get(url, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://q.10jqka.com.cn/',
+          'Accept': 'application/javascript, */*'
+        }
+      });
+      
+      // 解析同花顺返回的JavaScript数据
+      const priceMatch = response.data.match(/\"(\d+\.\d+)\"/);
+      if (priceMatch) {
+        const price = parseFloat(priceMatch[1]);
+        return isNaN(price) ? null : price;
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn(`同花顺实时价格获取失败: ${error.message}`);
+      return null;
+    }
   }
   
   /**
@@ -377,7 +456,9 @@ class DataSourceManager {
       case 'backup1':
         return this.fetchKlineFromSina(symbol, days);
       case 'backup2':
-        return this.fetchKlineFromNetease(symbol, days);
+        return this.fetchKlineFromEastmoney(symbol, days);
+      case 'backup3':
+        return this.fetchKlineFromTonghuashun(symbol, days);
       default:
         throw new Error(`未知K线数据源: ${sourceKey}`);
     }
@@ -435,29 +516,87 @@ class DataSourceManager {
   }
   
   /**
-   * 从网易财经获取K线数据
+   * 从东方财富获取K线数据
    * @param {string} symbol - 股票代码
    * @param {number} days - 天数
    */
-  async fetchKlineFromNetease(symbol, days) {
-    // 网易财经K线API实现
-    const neteaseSymbol = this.convertToNeteaseFormat(symbol);
-    const response = await axios.get(`${this.dataSources.backup2.kline}${neteaseSymbol}.json`, {
-      timeout: 10000
-    });
-    
-    if (response.data && response.data.data) {
-      return response.data.data.slice(-days).map(d => ({
-        date: d[0],
-        open: parseFloat(d[1]),
-        high: parseFloat(d[2]),
-        low: parseFloat(d[3]),
-        close: parseFloat(d[4]),
-        volume: parseFloat(d[5] || 0)
-      }));
+  async fetchKlineFromEastmoney(symbol, days) {
+    try {
+      const secid = this.convertSymbolToSecid(symbol);
+      const url = `${this.dataSources.backup2.kline}?secid=${secid}&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=0&end=20500000&lmt=${days + 10}`;
+      
+      const response = await axios.get(url, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://quote.eastmoney.com/',
+          'Accept': 'application/json, text/plain, */*'
+        }
+      });
+      
+      if (response.data && response.data.data && response.data.data.klines) {
+        return response.data.data.klines.slice(-days).map(kline => {
+          const [date, open, close, high, low, volume, amount, amplitude, changePercent, changeAmount, turnover] = kline.split(',');
+          return {
+            date: date,
+            open: parseFloat(open),
+            high: parseFloat(high),
+            low: parseFloat(low),
+            close: parseFloat(close),
+            volume: parseFloat(volume || 0)
+          };
+        });
+      }
+      
+      return [];
+    } catch (error) {
+      console.warn(`东方财富K线数据获取失败: ${error.message}`);
+      return [];
     }
-    
-    return [];
+  }
+
+  /**
+   * 从同花顺获取K线数据
+   * @param {string} symbol - 股票代码
+   * @param {number} days - 天数
+   */
+  async fetchKlineFromTonghuashun(symbol, days) {
+    try {
+      const url = `${this.dataSources.backup3.kline}${symbol}/01.js`;
+      
+      const response = await axios.get(url, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://q.10jqka.com.cn/',
+          'Accept': 'application/javascript, */*'
+        }
+      });
+      
+      // 解析同花顺返回的JavaScript数据
+      const dataMatch = response.data.match(/\[(.*?)\]/);
+      if (dataMatch) {
+        const dataStr = dataMatch[1];
+        const klines = dataStr.split('","').map(line => {
+          const fields = line.replace(/"/g, '').split(',');
+          return {
+            date: fields[0],
+            open: parseFloat(fields[1]),
+            high: parseFloat(fields[2]),
+            low: parseFloat(fields[3]),
+            close: parseFloat(fields[4]),
+            volume: parseFloat(fields[5] || 0)
+          };
+        });
+        
+        return klines.slice(-days);
+      }
+      
+      return [];
+    } catch (error) {
+      console.warn(`同花顺K线数据获取失败: ${error.message}`);
+      return [];
+    }
   }
   
   /**
@@ -482,6 +621,19 @@ class DataSourceManager {
       return '0' + symbol.substring(2);
     } else if (symbol.startsWith('sz')) {
       return '1' + symbol.substring(2);
+    }
+    return symbol;
+  }
+
+  /**
+   * 转换为东方财富secid格式
+   * @param {string} symbol - 原始股票代码
+   */
+  convertSymbolToSecid(symbol) {
+    if (symbol.startsWith('sh')) {
+      return '1.' + symbol.substring(2);
+    } else if (symbol.startsWith('sz')) {
+      return '0.' + symbol.substring(2);
     }
     return symbol;
   }

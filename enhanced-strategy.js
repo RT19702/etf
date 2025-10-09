@@ -80,6 +80,14 @@ CONFIG.returnDecimals = Number(process.env.RETURN_DECIMALS || 2);
 // 初始化数据源管理器和特别关注管理器
 const dataSourceManager = new DataSourceManager();
 const specialWatchManager = new SpecialWatchManager();
+
+// 设置环境变量（如果未设置）
+if (!process.env.REALTIME_API) {
+  process.env.REALTIME_API = 'https://qt.gtimg.cn/q=';
+}
+if (!process.env.KLINE_API) {
+  process.env.KLINE_API = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get';
+}
 const htmlReportGenerator = new HTMLReportGenerator();
 
 // 优化：初始化市场环境检测器
