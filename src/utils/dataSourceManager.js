@@ -36,7 +36,7 @@ class DataSourceManager {
   }
   
   /**
-   * 获取实时价格数据（增强版）
+   * 获取实时价格数据
    * @param {string} symbol - 股票代码
    */
   async fetchRealTimePrice(symbol) {
@@ -507,7 +507,7 @@ class DataSourceManager {
   }
   
   /**
-   * 记录成功（增强版）
+   * 记录成功
    * @param {string} sourceKey - 数据源键
    * @param {number} responseTime - 响应时间
    */

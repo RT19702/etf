@@ -105,7 +105,7 @@ class DynamicWatchDetector {
   }
 
   /**
-   * 检查RSI超卖状态（增强版）
+   * 检查RSI超卖状态
    * @private
    */
   _checkRSIOversoldEnhanced(etfData) {
@@ -151,7 +151,7 @@ class DynamicWatchDetector {
   }
 
   /**
-   * 检查异常成交量放大（增强版）
+   * 检查异常成交量放大
    * @private
    */
   _checkVolumeSpikeEnhanced(etfData) {

@@ -1,6 +1,5 @@
 // 🚀 增强版ETF轮动策略（集成所有新功能）
 require('dotenv').config({ path: './config/.env' });
-const axios = require('axios');
 const fs = require('fs');
 const dayjs = require('dayjs');
 const timezone = require('dayjs/plugin/timezone');
@@ -10,7 +9,6 @@ const utc = require('dayjs/plugin/utc');
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.tz.setDefault('Asia/Shanghai');
-const Bottleneck = require('bottleneck');
 const decimal = require('decimal.js');
 
 // 导入新增模块
@@ -18,15 +16,15 @@ const WeChatBot = require('./src/utils/wechatBot');
 const NumberFormatter = require('./src/utils/numberFormatter');
 const { FormatManager } = require('./src/config/formatConfig');
 const TechnicalIndicators = require('./src/utils/technicalIndicators');
-const BacktestEngine = require('./src/utils/backtestEngine');
 const DataSourceManager = require('./src/utils/dataSourceManager');
 const { SpecialWatchManager } = require('./src/utils/specialWatch');
 const HTMLReportGenerator = require('./src/utils/htmlReportGenerator');
 const { RiskManager } = require('./src/utils/riskManager');
 const SmartPortfolioManager = require('./src/utils/smartPortfolioManager');
-const PushManager = require('./src/utils/pushManager');
 const ConfigManager = require('./src/utils/configManager'); // 优化：统一配置管理
-const { initLogger, getLogger } = require('./src/utils/logger'); // 优化：统一日志系统
+const { initLogger } = require('./src/utils/logger'); // 优化：统一日志系统
+const { financial, determinePriceDecimals } = require('./src/utils/priceUtils'); // 优化：共享价格工具函数
+const AdaptiveLimiter = require('./src/utils/adaptiveLimiter'); // 优化：自适应限流器
 
 decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
 
@@ -106,234 +104,50 @@ const riskManager = new RiskManager({
 // 初始化智能持仓管理器
 const portfolioManager = new SmartPortfolioManager();
 
+// 优化：信号生成阈值常量（提取魔法数字）
+const SIGNAL_THRESHOLDS = {
+  // 技术评分阈值
+  TECH_SCORE_BULLISH: 70,      // 技术评分看涨阈值
+  TECH_SCORE_BEARISH: 30,      // 技术评分看跌阈值
+  TECH_SCORE_NEUTRAL: 50,      // 技术评分中性值
+
+  // RSI阈值
+  RSI_OVERSOLD: 30,            // RSI超卖阈值
+  RSI_OVERBOUGHT: 70,          // RSI超买阈值
+
+  // KDJ阈值
+  KDJ_NEUTRAL: 50,             // KDJ中性值
+
+  // 信号强度阈值
+  SIGNAL_STRONG_BUY: 0.6,      // 强烈买入信号阈值
+  SIGNAL_BUY: 0.3,             // 买入信号阈值
+  SIGNAL_WEAK_BUY: 0.1,        // 弱势买入信号阈值
+  SIGNAL_STRONG_SELL: -0.6,    // 强烈卖出信号阈值
+  SIGNAL_SELL: -0.3,           // 卖出信号阈值
+  SIGNAL_WEAK_SELL: -0.1,      // 弱势卖出信号阈值
+
+  // 信号强度判断
+  STRENGTH_HIGH: 0.4,          // 高强度阈值
+  STRENGTH_MEDIUM: 0.3,        // 中等强度阈值
+  STRENGTH_LOW: 0.2,           // 低强度阈值
+
+  // 数据要求
+  MIN_REQUIRED_DAYS: 50,       // 最小数据天数要求
+  REQUIRED_DAYS_BUFFER: 60     // 数据天数安全边际
+};
+
 // 全局市场环境变量（在分析过程中更新）
 let currentMarketEnvironment = null;
 
-// 优化：批量处理参数支持动态配置
-const batchSize = Math.max(1, Number(process.env.BATCH_SIZE) || 5);
-
-// 优化：自适应限流器配置
-class AdaptiveLimiter {
-  constructor() {
-    this.config = {
-      minTime: Number(process.env.LIMITER_MIN_TIME) || 500,
-      maxConcurrent: Number(process.env.LIMITER_MAX_CONCURRENT) || 3,
-      // 自适应参数
-      minMinTime: 200,      // 最小请求间隔
-      maxMinTime: 2000,     // 最大请求间隔
-      minConcurrent: 1,     // 最小并发数
-      maxConcurrent: 5      // 最大并发数
-    };
-
-    this.limiter = new Bottleneck({
-      minTime: this.config.minTime,
-      maxConcurrent: this.config.maxConcurrent
-    });
-
-    // 性能统计
-    this.stats = {
-      successCount: 0,
-      errorCount: 0,
-      totalResponseTime: 0,
-      requestCount: 0,
-      lastAdjustTime: Date.now()
-    };
-  }
-
-  /**
-   * 调度任务执行
-   * @param {Function} fn - 要执行的函数
-   * @returns {Promise} 执行结果
-   */
-  async schedule(fn) {
-    const startTime = Date.now();
-
-    try {
-      const result = await this.limiter.schedule(fn);
-
-      // 记录成功
-      this.stats.successCount++;
-      this.stats.requestCount++;
-      this.stats.totalResponseTime += (Date.now() - startTime);
-
-      // 定期调整限流参数
-      this.adjustIfNeeded();
-
-      return result;
-    } catch (error) {
-      // 记录错误
-      this.stats.errorCount++;
-      this.stats.requestCount++;
-
-      // 如果错误率高，立即调整
-      if (this.getErrorRate() > 0.2) {
-        this.adjustForHighErrorRate();
-      }
-
-      throw error;
-    }
-  }
-
-  /**
-   * 获取错误率
-   * @returns {number} 错误率
-   */
-  getErrorRate() {
-    if (this.stats.requestCount === 0) return 0;
-    return this.stats.errorCount / this.stats.requestCount;
-  }
-
-  /**
-   * 获取平均响应时间
-   * @returns {number} 平均响应时间（毫秒）
-   */
-  getAvgResponseTime() {
-    if (this.stats.successCount === 0) return 0;
-    return this.stats.totalResponseTime / this.stats.successCount;
-  }
-
-  /**
-   * 根据性能指标调整限流参数
-   */
-  adjustIfNeeded() {
-    const now = Date.now();
-    const timeSinceLastAdjust = now - this.stats.lastAdjustTime;
-
-    // 每30秒检查一次
-    if (timeSinceLastAdjust < 30000) return;
-
-    // 至少有10个请求才调整
-    if (this.stats.requestCount < 10) return;
-
-    const errorRate = this.getErrorRate();
-    const avgResponseTime = this.getAvgResponseTime();
-
-    // 性能良好：错误率<5%，响应时间<1秒
-    if (errorRate < 0.05 && avgResponseTime < 1000) {
-      this.increasePerformance();
-    }
-    // 性能一般：错误率5-15%或响应时间1-2秒
-    else if (errorRate < 0.15 && avgResponseTime < 2000) {
-      // 保持当前配置
-    }
-    // 性能较差：错误率>15%或响应时间>2秒
-    else {
-      this.decreasePerformance();
-    }
-
-    // 重置统计
-    this.resetStats();
-  }
-
-  /**
-   * 提高性能（增加并发，减少间隔）
-   */
-  increasePerformance() {
-    const currentMinTime = this.limiter._minTime;
-    const currentMaxConcurrent = this.limiter._maxConcurrent;
-
-    // 减少请求间隔（最多减少20%）
-    const newMinTime = Math.max(
-      this.config.minMinTime,
-      Math.floor(currentMinTime * 0.8)
-    );
-
-    // 增加并发数（最多+1）
-    const newMaxConcurrent = Math.min(
-      this.config.maxConcurrent,
-      currentMaxConcurrent + 1
-    );
-
-    if (newMinTime !== currentMinTime || newMaxConcurrent !== currentMaxConcurrent) {
-      this.limiter.updateSettings({
-        minTime: newMinTime,
-        maxConcurrent: newMaxConcurrent
-      });
-
-      console.log(`🚀 限流器性能提升: minTime ${currentMinTime}→${newMinTime}ms, maxConcurrent ${currentMaxConcurrent}→${newMaxConcurrent}`);
-    }
-  }
-
-  /**
-   * 降低性能（减少并发，增加间隔）
-   */
-  decreasePerformance() {
-    const currentMinTime = this.limiter._minTime;
-    const currentMaxConcurrent = this.limiter._maxConcurrent;
-
-    // 增加请求间隔（最多增加50%）
-    const newMinTime = Math.min(
-      this.config.maxMinTime,
-      Math.floor(currentMinTime * 1.5)
-    );
-
-    // 减少并发数（最多-1）
-    const newMaxConcurrent = Math.max(
-      this.config.minConcurrent,
-      currentMaxConcurrent - 1
-    );
-
-    if (newMinTime !== currentMinTime || newMaxConcurrent !== currentMaxConcurrent) {
-      this.limiter.updateSettings({
-        minTime: newMinTime,
-        maxConcurrent: newMaxConcurrent
-      });
-
-      console.log(`⚠️ 限流器性能降低: minTime ${currentMinTime}→${newMinTime}ms, maxConcurrent ${currentMaxConcurrent}→${newMaxConcurrent}`);
-    }
-  }
-
-  /**
-   * 高错误率时的紧急调整
-   */
-  adjustForHighErrorRate() {
-    const currentMinTime = this.limiter._minTime;
-    const currentMaxConcurrent = this.limiter._maxConcurrent;
-
-    // 大幅增加间隔，减少并发
-    const newMinTime = Math.min(this.config.maxMinTime, currentMinTime * 2);
-    const newMaxConcurrent = Math.max(this.config.minConcurrent, Math.floor(currentMaxConcurrent / 2));
-
-    this.limiter.updateSettings({
-      minTime: newMinTime,
-      maxConcurrent: newMaxConcurrent
-    });
-
-    console.log(`🚨 高错误率紧急调整: minTime ${currentMinTime}→${newMinTime}ms, maxConcurrent ${currentMaxConcurrent}→${newMaxConcurrent}`);
-
-    this.resetStats();
-  }
-
-  /**
-   * 重置统计数据
-   */
-  resetStats() {
-    this.stats = {
-      successCount: 0,
-      errorCount: 0,
-      totalResponseTime: 0,
-      requestCount: 0,
-      lastAdjustTime: Date.now()
-    };
-  }
-
-  /**
-   * 获取当前统计信息
-   * @returns {Object} 统计信息
-   */
-  getStats() {
-    return {
-      ...this.stats,
-      errorRate: this.getErrorRate(),
-      avgResponseTime: this.getAvgResponseTime(),
-      currentMinTime: this.limiter._minTime,
-      currentMaxConcurrent: this.limiter._maxConcurrent
-    };
-  }
-}
-
-// 创建自适应限流器实例
-const limiter = new AdaptiveLimiter();
+// 创建自适应限流器实例（修复：传递初始化参数）
+const limiter = new AdaptiveLimiter({
+  minTime: Number(process.env.LIMITER_MIN_TIME) || 500,
+  maxConcurrent: Number(process.env.LIMITER_MAX_CONCURRENT) || 3,
+  minMinTime: 200,
+  maxMinTime: 2000,
+  minConcurrent: 1,
+  maxConcurrentLimit: 5
+});
 
 // 优化：增强内存缓存，添加TTL过期时间机制，避免使用过期数据
 const cache = {
@@ -425,7 +239,15 @@ setInterval(() => {
   console.log(`🧹 缓存清理完成: K线${stats.klineCount}个, 价格${stats.priceCount}个, 指标${stats.indicatorsCount}个`);
 }, 5 * 60 * 1000);
 
-// 通用重试机制（优化：使用新的缓存机制）
+/**
+ * 通用重试机制（带缓存）
+ * @param {Function} fn - 要执行的异步函数
+ * @param {string} key - 缓存键
+ * @param {string} type - 缓存类型 ('kline', 'price', 'indicators')
+ * @param {number} retries - 重试次数，默认3次
+ * @param {number} delay - 重试延迟（毫秒），默认800ms
+ * @returns {Promise<any>} 函数执行结果
+ */
 async function fetchWithRetry(fn, key, type = 'kline', retries = 3, delay = 800) {
   // 优先查缓存（使用TTL机制）
   const cachedData = cache.get(type, key);
@@ -446,25 +268,25 @@ async function fetchWithRetry(fn, key, type = 'kline', retries = 3, delay = 800)
   }
 }
 
-function financial(num, decimals = 4) {
-  return new decimal(num).toDecimalPlaces(decimals).toNumber();
-}
-
-// 增强的ETF分析函数
+/**
+ * 增强的ETF分析函数
+ * @param {Object} etf - ETF对象，包含 symbol 和 name 属性
+ * @returns {Promise<Object|null>} 分析结果对象，包含价格、技术指标、信号等信息；失败返回 null
+ */
 async function analyzeSymbolEnhanced(etf) {
   try {
     console.log(color(`  🔍 分析 ${etf.name}...`, 'gray'));
     
     // 使用多数据源获取K线数据（带缓存和重试）
-    // 优化：MACD需要至少34天数据（26+9-1），增加安全边际到50天
+    // 优化：MACD需要至少34天数据（26+9-1），增加安全边际
     // 确保有足够的历史数据进行准确的技术指标计算
-    const requiredDays = Math.max(CONFIG.lookbackDays + 30, 60); // 增加安全边际
+    const requiredDays = Math.max(CONFIG.lookbackDays + 30, SIGNAL_THRESHOLDS.REQUIRED_DAYS_BUFFER);
     const kline = await fetchWithRetry(
       () => dataSourceManager.fetchKlineData(etf.symbol, requiredDays),
       etf.symbol + '_kline', 'kline', 3, 800
     );
-    // 优化：提高最小数据要求从35天到50天，确保MACD等指标计算准确
-    const minRequiredDays = 50;
+    // 优化：使用配置常量替代魔法数字
+    const minRequiredDays = SIGNAL_THRESHOLDS.MIN_REQUIRED_DAYS;
     if (!kline || kline.length < minRequiredDays) {
       console.log(color(`    ⚠️ ${etf.name} 数据不足 (需要至少${minRequiredDays}天，实际${kline?.length || 0}天)`, 'yellow'));
       return null;
@@ -476,12 +298,6 @@ async function analyzeSymbolEnhanced(etf) {
     const allHighs = kline.map(d => d.high);
     const allLows = kline.map(d => d.low);
     const allVolumes = kline.map(d => d.volume);
-
-    // 用于统计分析的最近数据
-    const prices = recent.map(d => d.close);
-    const highs = recent.map(d => d.high);
-    const lows = recent.map(d => d.low);
-    const volumes = recent.map(d => d.volume);
 
     // 动态参数调整：根据波动率自动调整窗口
     let momentumWindow = CONFIG.momentumWindow;
@@ -667,8 +483,18 @@ function getAdaptiveWeights(marketEnvironment) {
   return weights;
 }
 
-// 增强信号生成（智能决策版本 - 避免信号矛盾）
-// 优化：添加市场环境参数，根据市场情况调整信号权重
+/**
+ * 增强信号生成（智能决策版本 - 避免信号矛盾）
+ * 综合多个技术指标生成交易信号，根据市场环境动态调整权重
+ * @param {number} current - 当前价格
+ * @param {number} buy - 买入阈值价格
+ * @param {number} sell - 卖出阈值价格
+ * @param {Object} technicalScore - 技术评分对象
+ * @param {Object} indicators - 技术指标对象（包含 macd, rsi, kdj 等）
+ * @param {number} fusionScore - 融合评分
+ * @param {Object} marketEnvironment - 市场环境对象（可选）
+ * @returns {Object} 信号对象，包含 text, level, score, confidence, sources 等属性
+ */
 function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, fusionScore, marketEnvironment = null) {
   // 收集所有信号源
   const signalSources = [];
@@ -685,16 +511,16 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
   }
   signalSources.push({ source: 'price', signal: priceSignal, weight: weights.price, strength: Math.abs(priceSignal) });
 
-  // 2. 技术评分信号
+  // 2. 技术评分信号（优化：使用配置常量）
   const fusion = fusionScore !== undefined ? fusionScore : technicalScore.score;
   let techSignal = 0;
   let techStrength = 0;
-  if (fusion >= 70) {
+  if (fusion >= SIGNAL_THRESHOLDS.TECH_SCORE_BULLISH) {
     techSignal = 1;
-    techStrength = Math.min((fusion - 50) / 50, 1);
-  } else if (fusion <= 30) {
+    techStrength = Math.min((fusion - SIGNAL_THRESHOLDS.TECH_SCORE_NEUTRAL) / SIGNAL_THRESHOLDS.TECH_SCORE_NEUTRAL, 1);
+  } else if (fusion <= SIGNAL_THRESHOLDS.TECH_SCORE_BEARISH) {
     techSignal = -1;
-    techStrength = Math.min((50 - fusion) / 50, 1);
+    techStrength = Math.min((SIGNAL_THRESHOLDS.TECH_SCORE_NEUTRAL - fusion) / SIGNAL_THRESHOLDS.TECH_SCORE_NEUTRAL, 1);
   }
   signalSources.push({ source: 'technical', signal: techSignal, weight: weights.technical, strength: techStrength });
 
@@ -713,30 +539,30 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
   }
   signalSources.push({ source: 'macd', signal: macdSignal, weight: weights.macd, strength: macdStrength });
 
-  // 4. RSI信号
+  // 4. RSI信号（优化：使用配置常量）
   let rsiSignal = 0;
   let rsiStrength = 0;
   if (indicators.rsi) {
-    if (indicators.rsi < 30) {
+    if (indicators.rsi < SIGNAL_THRESHOLDS.RSI_OVERSOLD) {
       rsiSignal = 1;
-      rsiStrength = (30 - indicators.rsi) / 30;
-    } else if (indicators.rsi > 70) {
+      rsiStrength = (SIGNAL_THRESHOLDS.RSI_OVERSOLD - indicators.rsi) / SIGNAL_THRESHOLDS.RSI_OVERSOLD;
+    } else if (indicators.rsi > SIGNAL_THRESHOLDS.RSI_OVERBOUGHT) {
       rsiSignal = -1;
-      rsiStrength = (indicators.rsi - 70) / 30;
+      rsiStrength = (indicators.rsi - SIGNAL_THRESHOLDS.RSI_OVERBOUGHT) / SIGNAL_THRESHOLDS.RSI_OVERSOLD;
     }
   }
   signalSources.push({ source: 'rsi', signal: rsiSignal, weight: weights.rsi, strength: rsiStrength });
 
-  // 5. KDJ信号
+  // 5. KDJ信号（优化：使用配置常量）
   let kdjSignal = 0;
   let kdjStrength = 0;
   if (indicators.kdj && indicators.kdj.k !== undefined && indicators.kdj.d !== undefined) {
     const k = parseFloat(indicators.kdj.k);
     const d = parseFloat(indicators.kdj.d);
-    if (k > d && k < 50) {
+    if (k > d && k < SIGNAL_THRESHOLDS.KDJ_NEUTRAL) {
       kdjSignal = 1;
       kdjStrength = 0.8;
-    } else if (k < d && k > 50) {
+    } else if (k < d && k > SIGNAL_THRESHOLDS.KDJ_NEUTRAL) {
       kdjSignal = -1;
       kdjStrength = 0.8;
     }
@@ -760,35 +586,35 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
     weightedSignal = weightedSignal / totalWeight;
   }
 
-  // 决定最终信号
+  // 决定最终信号（优化：使用配置常量）
   let finalSignal = '持有';
   let signalColor = 'green';
   let confidence = '中等';
 
-  if (weightedSignal > 0.3) {
-    if (weightedSignal > 0.6 && signalStrength > 0.4) {
+  if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_BUY) {
+    if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_STRONG_BUY && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
       finalSignal = '强烈买入';
       confidence = '高';
     } else {
       finalSignal = '买入';
-      confidence = signalStrength > 0.3 ? '高' : '中等';
+      confidence = signalStrength > SIGNAL_THRESHOLDS.STRENGTH_MEDIUM ? '高' : '中等';
     }
     signalColor = 'blue';
-  } else if (weightedSignal < -0.3) {
-    if (weightedSignal < -0.6 && signalStrength > 0.4) {
+  } else if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_SELL) {
+    if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_STRONG_SELL && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
       finalSignal = '强烈卖出';
       confidence = '高';
     } else {
       finalSignal = '卖出';
-      confidence = signalStrength > 0.3 ? '高' : '中等';
+      confidence = signalStrength > SIGNAL_THRESHOLDS.STRENGTH_MEDIUM ? '高' : '中等';
     }
     signalColor = 'red';
   } else {
     // 中性区间，根据信号强度决定是否给出弱势信号
-    if (weightedSignal > 0.1 && signalStrength > 0.2) {
+    if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_WEAK_BUY && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
       finalSignal = '弱势买入';
       signalColor = 'blue';
-    } else if (weightedSignal < -0.1 && signalStrength > 0.2) {
+    } else if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_WEAK_SELL && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
       finalSignal = '弱势卖出';
       signalColor = 'red';
     }
@@ -804,14 +630,6 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
     weightedSignal: weightedSignal.toFixed(3),
     signalStrength: signalStrength.toFixed(3)
   };
-}
-
-// 根据价格大小动态确定小数位数
-function determinePriceDecimals(price) {
-  if (price >= 100) return 2;
-  if (price >= 10) return 3;
-  if (price >= 1) return 3;
-  return 4;
 }
 
 // 基础统计计算
@@ -850,7 +668,6 @@ function generateEnhancedStrategy(stats) {
   const strongBuys = stats.filter(s => s.signal?.level?.includes('强烈买入'));
   const buys = stats.filter(s => s.signal?.level?.includes('买入') && !s.signal?.level?.includes('强烈'));
   const sells = stats.filter(s => s.signal?.level?.includes('卖出'));
-  const holds = stats.filter(s => s.signal?.level?.includes('持有'));
   const conflicts = stats.filter(s => s.signal?.level?.includes('矛盾'));
 
   // 计算市场趋势（基于价格偏离的平均值）
@@ -889,22 +706,28 @@ function generateEnhancedStrategy(stats) {
     recommendation = '等待明确信号';
   }
 
-  // 检查特别关注ETF
-  const specialWatchAlerts = specialWatchManager.checkAllWatchConditions(stats);
-
   return {
     action,
     recommendation,
     marketTrend: `${avgDeviation.toFixed(2)}%`,
-    top3: sortedByStrength,
-    specialWatchAlerts
+    top3: sortedByStrength
   };
 }
 
-// 增强报告生成
-function generateEnhancedReport(strategies, stats) {
+/**
+ * 增强报告生成
+ * @param {Array<Object>} stats - ETF分析结果数组
+ * @param {Array<Object>} specialWatchAlerts - 特别关注提示数组（可选，避免重复调用）
+ * @returns {Object} 报告对象，包含标题、日期、摘要、技术分析、详细数据等
+ */
+function generateEnhancedReport(stats, specialWatchAlerts = null) {
   // 生成增强版策略推荐
   const enhancedStrategy = generateEnhancedStrategy(stats);
+
+  // 如果没有传入 specialWatchAlerts，则调用检查
+  if (!specialWatchAlerts) {
+    specialWatchAlerts = specialWatchManager.checkAllWatchConditions(stats);
+  }
 
   const report = {
     title: 'ETF轮动策略增强报告',
@@ -916,7 +739,7 @@ function generateEnhancedReport(strategies, stats) {
       市场趋势: enhancedStrategy.marketTrend,
       前三强势: enhancedStrategy.top3
     },
-    specialWatchAlerts: enhancedStrategy.specialWatchAlerts || [],
+    specialWatchAlerts: specialWatchAlerts || [],
     technicalAnalysis: {
       强烈买入: stats.filter(s => s.signal?.level?.includes('强烈买入')).length,
       买入: stats.filter(s => s.signal?.level?.includes('买入') && !s.signal?.level?.includes('强烈')).length,
@@ -1016,19 +839,9 @@ async function sendWeChatNotification(report) {
   }
 }
 
-// 获取数据源友好名称
-function getDataSourceName(sourceKey) {
-  const sourceNames = {
-    'primary': '腾讯财经',
-    'backup1': '新浪财经',
-    'backup2': '网易财经'
-  };
-  return sourceNames[sourceKey] || sourceKey;
-}
-
 // 格式化增强版企业微信报告
 function formatEnhancedWeChatReport(report) {
-  let content = `# 📊 ETF轮动策略（增强版）\n\n`;
+  let content = `# 📊 ETF轮动策略\n\n`;
 
   // 显示推送时间和报告生成时间
   if (report.pushTime && report.originalDate) {
@@ -1147,7 +960,7 @@ async function runEnhancedStrategy() {
       return;
     }
 
-    console.log(color('📊 正在分析ETF数据（增强版）...', 'yellow'));
+    console.log(color('📊 正在分析ETF数据...', 'yellow'));
 
     // 修复：清理所有缓存，确保使用最新数据
     console.log(color('🧹 清理缓存，确保使用最新数据...', 'gray'));
@@ -1160,23 +973,18 @@ async function runEnhancedStrategy() {
     // 因为 MarketEnvironmentDetector 需要ETF数据数组而不是K线数据
     console.log(color('🔍 市场环境检测将在数据分析后进行...', 'cyan'));
 
-    // 批量分析ETF
-    const batchSize = 5;
-    const results = [];
+    // 优化：批量分析ETF - 全部并行处理，通过限流器自动控制并发
+    console.log(color(`  📦 开始并行分析 ${CONFIG.symbols.length} 个ETF...`, 'gray'));
 
-    for (let i = 0; i < CONFIG.symbols.length; i += batchSize) {
-      const batch = CONFIG.symbols.slice(i, i + batchSize);
-      console.log(color(`  📦 处理批次 ${Math.floor(i / batchSize) + 1}/${Math.ceil(CONFIG.symbols.length / batchSize)} (${batch.length}个ETF)`, 'gray'));
+    const allPromises = CONFIG.symbols.map(etf =>
+      limiter.schedule(() => analyzeSymbolEnhanced(etf))
+    );
 
-      const batchPromises = batch.map(etf => limiter.schedule(() => analyzeSymbolEnhanced(etf)));
-      const batchResults = await Promise.allSettled(batchPromises);
+    const allResults = await Promise.allSettled(allPromises);
 
-      batchResults.forEach(result => {
-        if (result.status === 'fulfilled' && result.value) {
-          results.push(result.value);
-        }
-      });
-    }
+    const results = allResults
+      .filter(result => result.status === 'fulfilled' && result.value)
+      .map(result => result.value);
 
     console.log(color(`📊 成功分析${results.length}个ETF`, 'green'));
 
@@ -1200,7 +1008,7 @@ async function runEnhancedStrategy() {
       currentMarketEnvironment = null;
     }
 
-    // 检查特别关注ETF
+    // 优化：检查特别关注ETF（只调用一次）
     console.log(color('🔍 检查特别关注ETF...', 'gray'));
     const specialWatchAlerts = specialWatchManager.checkAllWatchConditions(results);
     if (specialWatchAlerts.length > 0) {
@@ -1212,17 +1020,20 @@ async function runEnhancedStrategy() {
       console.log(color('  ℹ️ 暂无特别关注提示', 'gray'));
     }
 
-    // 生成增强报告
+    // 生成增强报告（传入 specialWatchAlerts 避免重复调用）
     console.log(color('📋 正在生成增强报告...', 'yellow'));
-    const report = generateEnhancedReport([], results);
 
-    // 添加特别关注信息到报告
-    report.specialWatchAlerts = specialWatchAlerts;
+    // 优化：统一生成时间戳，避免多次生成导致不一致
+    const reportTimestamp = new Date();
+    const generatedAt = reportTimestamp.toISOString();
+    const dataTimestamp = reportTimestamp.getTime();
 
-    // 修复：添加市场环境信息到报告（用于企业微信通知）
+    const report = generateEnhancedReport(results, specialWatchAlerts);
+
+    // 修复：添加市场环境信息和时间戳到报告（用于企业微信通知）
     report.marketEnvironment = currentMarketEnvironment;
-    report.generatedAt = new Date().toISOString();
-    report.dataTimestamp = Date.now();
+    report.generatedAt = generatedAt;
+    report.dataTimestamp = dataTimestamp;
 
     // 显示增强版结果
     console.log('');
@@ -1242,15 +1053,6 @@ async function runEnhancedStrategy() {
     console.log(color(`信号矛盾: ${report.technicalAnalysis.信号矛盾}`, 'yellow'));
     console.log('');
 
-    /* // 风险管理状态
-    console.log(color('=== 风险管理状态 ===', 'bold'));
-    const riskMetrics = riskManager.getRiskMetrics();
-    console.log(color(`当前持仓数: ${riskMetrics.currentPositions}`, 'blue'));
-    console.log(color(`总交易次数: ${riskMetrics.totalTrades}`, 'blue'));
-    console.log(color(`今日交易次数: ${riskMetrics.dailyTrades}`, 'blue'));
-    console.log(color(`胜率: ${riskMetrics.winRate.toFixed(1)}%`, 'green'));
-    console.log(color(`最大回撤: ${riskMetrics.maxDrawdown.toFixed(2)}%`, 'yellow')); */
-
     // 检查系统性风险
     const systemicWarnings = riskManager.checkSystemicRisk();
     if (systemicWarnings.length > 0) {
@@ -1263,12 +1065,11 @@ async function runEnhancedStrategy() {
     }
 
     // 生成JSON报告（每次运行都会覆盖旧报告）
+    // 优化：使用已生成的时间戳，确保一致性
     const jsonReportPath = './data/reports/enhanced_etf_report.json';
     const reportData = {
-      ...report,
-      generatedAt: new Date().toISOString(),
-      dataTimestamp: Date.now(),
-      marketEnvironment: currentMarketEnvironment
+      ...report
+      // generatedAt, dataTimestamp, marketEnvironment 已在 report 中
     };
     fs.writeFileSync(jsonReportPath, JSON.stringify(reportData, null, 2));
     console.log(color('📄 JSON报告已生成: ./data/reports/enhanced_etf_report.json', 'green'));

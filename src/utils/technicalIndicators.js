@@ -586,7 +586,7 @@ class TechnicalIndicators {
   }
 
   /**
-   * 综合技术分析评分（增强版）
+   * 综合技术分析评分
    * @param {Object} indicators - 各项技术指标
    * @param {Object} marketContext - 市场环境上下文
    */

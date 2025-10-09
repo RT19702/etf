@@ -1,30 +1,16 @@
 // 📊 数据获取模块
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
-const decimal = require('decimal.js');
 const fs = require('fs');
 const path = require('path');
 const { CONFIG } = require('./config');
-
-decimal.set({ precision: 12, rounding: decimal.ROUND_HALF_UP });
+const { financial, determinePriceDecimals } = require('../utils/priceUtils');
 
 // API限制器
-const limiter = new Bottleneck({ 
+const limiter = new Bottleneck({
   minTime: CONFIG.apiRateLimit,
   maxConcurrent: CONFIG.maxConcurrentRequests
 });
-
-// 工具函数
-function financial(num, decimals = 4) {
-  return new decimal(num).toDecimalPlaces(decimals).toNumber();
-}
-
-function determinePriceDecimals(price) {
-  if (price >= 100) return 2;
-  if (price >= 10) return 3;
-  if (price >= 1) return 3;
-  return 4;
-}
 
 // 获取实时价格
 async function fetchRealTimePrice(symbol) {

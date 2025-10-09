@@ -203,7 +203,7 @@ class RiskManager {
   }
   
   /**
-   * 计算动态止损价格（增强版）
+   * 计算动态止损价格
    * @param {number} price - 当前价格
    * @param {Object} technicalData - 技术指标数据
    * @param {Object} marketContext - 市场环境上下文
@@ -478,7 +478,7 @@ class RiskManager {
     }
   }
 
-  // 更新仓位价格和止损（增强版）
+  // 更新仓位价格和止损
   updatePosition(symbol, currentPrice, technicalData = {}) {
     const position = this.positions.get(symbol);
     if (!position) return;
@@ -488,7 +488,7 @@ class RiskManager {
   }
   
   /**
-   * 检查止损止盈（增强版）
+   * 检查止损止盈
    * @param {string} symbol - 股票代码
    * @param {number} currentPrice - 当前价格
    * @param {Object} technicalData - 技术指标数据
