@@ -194,21 +194,27 @@ class SectorRotationDetector {
    */
   calculateCompositeScore(metrics) {
     const weights = {
-      priceChange: 0.25,      // 价格变化权重
-      technicalScore: 0.20,   // 技术评分权重
-      volumeRatio: 0.15,      // 成交量权重
-      momentum: 0.15,         // 动量权重
+      priceChange: 0.30,      // 价格变化权重（提高）
+      technicalScore: 0.25,   // 技术评分权重（提高）
+      volumeRatio: 0.10,      // 成交量权重（降低，因为数据可能不准确）
+      momentum: 0.10,         // 动量权重（降低，因为数据可能不准确）
       buySignalRatio: 0.15,   // 买入信号比例权重
       strongBuyRatio: 0.10    // 强烈买入信号权重
     };
     
-    // 归一化各指标到0-100
+    // 归一化各指标到0-100，优化计算逻辑
     const normalized = {
-      priceChange: Math.max(0, Math.min(100, 50 + metrics.priceChange * 10)),
-      technicalScore: metrics.technicalScore,
-      volumeRatio: Math.min(100, metrics.volumeRatio * 50),
-      momentum: Math.max(0, Math.min(100, 50 + metrics.momentum * 100)),
+      // 价格变化：-10%到+10%映射到0-100
+      priceChange: Math.max(0, Math.min(100, 50 + metrics.priceChange * 5)),
+      // 技术评分直接使用
+      technicalScore: Math.max(0, Math.min(100, metrics.technicalScore)),
+      // 成交量：1.0-3.0映射到50-100
+      volumeRatio: Math.max(50, Math.min(100, 50 + (metrics.volumeRatio - 1) * 25)),
+      // 动量：-0.1到+0.1映射到0-100
+      momentum: Math.max(0, Math.min(100, 50 + metrics.momentum * 500)),
+      // 买入信号比例直接映射
       buySignalRatio: metrics.buySignalRatio * 100,
+      // 强烈买入信号比例直接映射
       strongBuyRatio: metrics.strongBuyRatio * 100
     };
     
@@ -218,7 +224,7 @@ class SectorRotationDetector {
       score += normalized[key] * weight;
     }
     
-    return score;
+    return Math.max(0, Math.min(100, score));
   }
 
   /**
@@ -227,15 +233,25 @@ class SectorRotationDetector {
   identifyStrongWeakSectors(sectorPerformance) {
     const sectors = Object.values(sectorPerformance);
     
+    if (sectors.length === 0) {
+      return { strongSectors: [], weakSectors: [] };
+    }
+    
     // 按综合评分排序
     const sortedSectors = sectors.sort((a, b) => b.compositeScore - a.compositeScore);
     
-    // 强势行业：评分前30%且评分>60
-    const strongThreshold = Math.max(60, sortedSectors[Math.floor(sortedSectors.length * 0.3)]?.compositeScore || 60);
+    // 计算动态阈值
+    const top30PercentIndex = Math.floor(sortedSectors.length * 0.3);
+    const bottom30PercentIndex = Math.floor(sortedSectors.length * 0.7);
+    
+    // 强势行业：评分前30%且评分>50（降低固定阈值）
+    const relativeStrongThreshold = sortedSectors[top30PercentIndex]?.compositeScore || 0;
+    const strongThreshold = Math.max(50, relativeStrongThreshold); // 降低固定阈值从60到50
     const strongSectors = sortedSectors.filter(s => s.compositeScore >= strongThreshold);
     
     // 弱势行业：评分后30%或评分<40
-    const weakThreshold = Math.min(40, sortedSectors[Math.floor(sortedSectors.length * 0.7)]?.compositeScore || 40);
+    const relativeWeakThreshold = sortedSectors[bottom30PercentIndex]?.compositeScore || 100;
+    const weakThreshold = Math.min(40, relativeWeakThreshold);
     const weakSectors = sortedSectors.filter(s => s.compositeScore <= weakThreshold);
     
     return { strongSectors, weakSectors };
