@@ -87,6 +87,15 @@ const htmlReportGenerator = new HTMLReportGenerator();
 const MarketEnvironmentDetector = require('./src/utils/marketEnvironmentDetector');
 const marketEnvironmentDetector = new MarketEnvironmentDetector();
 
+// 🚀 新增：自适应市场环境模块
+const SectorRotationDetector = require('./src/utils/sectorRotationDetector');
+const PolicyTrendAnalyzer = require('./src/utils/policyTrendAnalyzer');
+const AdaptiveAssetAllocator = require('./src/utils/adaptiveAssetAllocator');
+
+const sectorRotationDetector = new SectorRotationDetector();
+const policyTrendAnalyzer = new PolicyTrendAnalyzer();
+const adaptiveAssetAllocator = new AdaptiveAssetAllocator();
+
 // 初始化增强风险管理器
 const riskManager = new RiskManager({
   stopLossPercent: Number(process.env.STOP_LOSS_PERCENT) || 0.05,
@@ -236,7 +245,6 @@ const cache = {
 setInterval(() => {
   cache.cleanup();
   const stats = cache.getStats();
-  console.log(`🧹 缓存清理完成: K线${stats.klineCount}个, 价格${stats.priceCount}个, 指标${stats.indicatorsCount}个`);
 }, 5 * 60 * 1000);
 
 /**
@@ -877,6 +885,76 @@ function formatEnhancedWeChatReport(report) {
     content += `\n`;
   }
 
+  // 🚀 新增：行业轮动分析
+  if (report.sectorRotation) {
+    const rotation = report.sectorRotation;
+    content += `## 🔄 行业轮动分析\n`;
+    content += `- **强势行业**: <font color="info">${rotation.summary.topSector}</font> (评分${rotation.summary.topSectorScore.toFixed(1)})\n`;
+    content += `- **资金流向**: ${rotation.summary.marketDirection}\n`;
+
+    if (rotation.capitalFlow.inflowSectors.length > 0) {
+      const topInflow = rotation.capitalFlow.inflowSectors[0];
+      content += `- **主流入**: ${topInflow.sector} (成交量${topInflow.avgVolumeRatio.toFixed(2)}倍)\n`;
+    }
+
+    if (rotation.allocationAdvice.recommended.length > 0) {
+      content += `- **推荐配置**: ${rotation.allocationAdvice.recommended.slice(0, 3).join('、')}\n`;
+    }
+    content += `\n`;
+  }
+
+  // 🚀 新增：政策导向分析
+  if (report.policyTrends && report.policyTrends.summary.mainTheme !== '无明确主题') {
+    const policy = report.policyTrends;
+    content += `## 📋 政策导向分析\n`;
+    content += `- **主要主题**: <font color="info">${policy.summary.mainTheme}</font>\n`;
+    content += `- **置信度**: ${(policy.summary.confidence * 100).toFixed(0)}%\n`;
+
+    if (policy.investmentAdvice.primaryTheme) {
+      const primary = policy.investmentAdvice.primaryTheme;
+      content += `- **建议配置**: ${primary.theme} (${(primary.allocation * 100).toFixed(0)}%)\n`;
+      content += `- **信号强度**: ${primary.strength}\n`;
+    }
+
+    if (policy.policyShifts && policy.policyShifts.length > 0) {
+      const shifts = policy.policyShifts.filter(s => s.type === 'emerging');
+      if (shifts.length > 0) {
+        content += `- **新兴热点**: ${shifts.map(s => s.theme).join('、')}\n`;
+      }
+    }
+    content += `\n`;
+  }
+
+  // 🚀 新增：智能配置方案
+  if (report.assetAllocation) {
+    const allocation = report.assetAllocation;
+    content += `## 🎯 智能配置方案\n`;
+    content += `- **风险偏好**: ${allocation.riskAppetite.level} (股票${(allocation.riskAppetite.equity * 100).toFixed(0)}%)\n`;
+    content += `- **预期收益**: ${allocation.expectedMetrics.expectedReturn.toFixed(2)}%\n`;
+    content += `- **预期风险**: ${allocation.expectedMetrics.expectedRisk.toFixed(2)}%\n`;
+    content += `- **夏普比率**: ${allocation.expectedMetrics.sharpeRatio.toFixed(2)}\n\n`;
+
+    // 核心配置（前5个）
+    if (allocation.etfAllocation.length > 0) {
+      content += `**核心配置**:\n`;
+      allocation.etfAllocation.slice(0, 5).forEach((item, index) => {
+        content += `${index + 1}. **${item.name}** (${(item.weight * 100).toFixed(1)}%)\n`;
+        content += `   - ${item.reason}\n`;
+      });
+      content += `\n`;
+    }
+
+    // 调仓建议
+    if (allocation.rebalanceAdvice.actions.length > 0) {
+      content += `**调仓建议**: ${allocation.rebalanceAdvice.summary}\n`;
+      allocation.rebalanceAdvice.actions.slice(0, 3).forEach(action => {
+        const actionColor = action.action === '买入' ? 'info' : action.action === '清仓' ? 'warning' : 'comment';
+        content += `- <font color="${actionColor}">${action.action}</font> ${action.name} (${(action.targetWeight * 100).toFixed(1)}%)\n`;
+      });
+      content += `\n`;
+    }
+  }
+
   // 核心推荐（美化）
   content += `## 🎯 策略推荐\n`;
   content += `- **推荐操作**: <font color="${report.summary.推荐操作.includes('买入') ? 'blue' : report.summary.推荐操作.includes('卖出') ? 'red' : 'black'}">${report.summary.推荐操作}</font>\n`;
@@ -1008,6 +1086,81 @@ async function runEnhancedStrategy() {
       currentMarketEnvironment = null;
     }
 
+    // 🚀 新增：行业轮动分析
+    console.log(color('🔄 正在分析行业轮动...', 'cyan'));
+    let sectorRotationAnalysis = null;
+    try {
+      sectorRotationAnalysis = sectorRotationDetector.analyzeSectorRotation(results);
+      console.log(color(`📊 强势行业: ${sectorRotationAnalysis.summary.topSector} (评分${sectorRotationAnalysis.summary.topSectorScore.toFixed(1)})`, 'cyan'));
+      console.log(color(`   资金流向: ${sectorRotationAnalysis.summary.marketDirection}`, 'cyan'));
+      console.log(color(`   推荐配置: ${sectorRotationAnalysis.allocationAdvice.recommended.slice(0, 3).join('、')}`, 'cyan'));
+
+      logger.info('行业轮动分析完成', {
+        topSector: sectorRotationAnalysis.summary.topSector,
+        strongSectorCount: sectorRotationAnalysis.strongSectors.length
+      });
+    } catch (error) {
+      console.warn(color(`⚠️ 行业轮动分析失败: ${error.message}`, 'yellow'));
+      logger.warn('行业轮动分析失败', { error: error.message });
+    }
+
+    // 🚀 新增：政策导向分析
+    console.log(color('📋 正在分析政策导向...', 'cyan'));
+    let policyTrendAnalysis = null;
+    try {
+      if (sectorRotationAnalysis) {
+        policyTrendAnalysis = policyTrendAnalyzer.analyzePolicyTrends(sectorRotationAnalysis, currentMarketEnvironment);
+        console.log(color(`📊 政策主题: ${policyTrendAnalysis.summary.mainTheme}`, 'cyan'));
+        console.log(color(`   强信号数: ${policyTrendAnalysis.summary.strongSignalCount}个`, 'cyan'));
+
+        if (policyTrendAnalysis.investmentAdvice.primaryTheme) {
+          const primary = policyTrendAnalysis.investmentAdvice.primaryTheme;
+          console.log(color(`   主要方向: ${primary.theme} (建议配置${(primary.allocation * 100).toFixed(0)}%)`, 'cyan'));
+        }
+
+        logger.info('政策导向分析完成', {
+          mainTheme: policyTrendAnalysis.summary.mainTheme,
+          themeCount: policyTrendAnalysis.summary.themeCount
+        });
+      }
+    } catch (error) {
+      console.warn(color(`⚠️ 政策导向分析失败: ${error.message}`, 'yellow'));
+      logger.warn('政策导向分析失败', { error: error.message });
+    }
+
+    // 🚀 新增：动态资产配置
+    console.log(color('🎯 正在生成自适应配置方案...', 'cyan'));
+    let assetAllocation = null;
+    try {
+      if (currentMarketEnvironment && sectorRotationAnalysis && policyTrendAnalysis) {
+        assetAllocation = adaptiveAssetAllocator.generateAllocation(
+          currentMarketEnvironment,
+          sectorRotationAnalysis,
+          policyTrendAnalysis,
+          results
+        );
+
+        console.log(color(`📊 风险偏好: ${assetAllocation.riskAppetite.level} (股票仓位${(assetAllocation.riskAppetite.equity * 100).toFixed(0)}%)`, 'cyan'));
+        console.log(color(`   预期收益: ${assetAllocation.expectedMetrics.expectedReturn.toFixed(2)}% | 预期风险: ${assetAllocation.expectedMetrics.expectedRisk.toFixed(2)}%`, 'cyan'));
+        console.log(color(`   配置数量: ${assetAllocation.etfAllocation.length}个ETF`, 'cyan'));
+
+        // 显示前5个配置
+        console.log(color('   核心配置:', 'cyan'));
+        assetAllocation.etfAllocation.slice(0, 5).forEach((item, index) => {
+          console.log(color(`     ${index + 1}. ${item.name} (${(item.weight * 100).toFixed(1)}%) - ${item.reason}`, 'gray'));
+        });
+
+        logger.info('资产配置方案生成完成', {
+          riskLevel: assetAllocation.riskAppetite.level,
+          etfCount: assetAllocation.etfAllocation.length,
+          expectedReturn: assetAllocation.expectedMetrics.expectedReturn
+        });
+      }
+    } catch (error) {
+      console.warn(color(`⚠️ 资产配置生成失败: ${error.message}`, 'yellow'));
+      logger.warn('资产配置生成失败', { error: error.message });
+    }
+
     // 优化：检查特别关注ETF（只调用一次）
     console.log(color('🔍 检查特别关注ETF...', 'gray'));
     const specialWatchAlerts = specialWatchManager.checkAllWatchConditions(results);
@@ -1034,6 +1187,17 @@ async function runEnhancedStrategy() {
     report.marketEnvironment = currentMarketEnvironment;
     report.generatedAt = generatedAt;
     report.dataTimestamp = dataTimestamp;
+
+    // 🚀 新增：添加自适应分析结果到报告
+    if (sectorRotationAnalysis) {
+      report.sectorRotation = sectorRotationAnalysis;
+    }
+    if (policyTrendAnalysis) {
+      report.policyTrends = policyTrendAnalysis;
+    }
+    if (assetAllocation) {
+      report.assetAllocation = assetAllocation;
+    }
 
     // 显示增强版结果
     console.log('');
