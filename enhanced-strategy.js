@@ -493,8 +493,112 @@ function getAdaptiveWeights(marketEnvironment) {
 }
 
 /**
- * 增强信号生成（智能决策版本 - 避免信号矛盾）
- * 综合多个技术指标生成交易信号，根据市场环境动态调整权重
+ * 🚀 新增：根据市场环境获取自适应信号阈值
+ * @param {Object} marketEnvironment - 市场环境数据
+ * @returns {Object} 自适应阈值配置
+ */
+function getAdaptiveSignalThresholds(marketEnvironment) {
+  // 默认阈值（与原有SIGNAL_THRESHOLDS保持一致）
+  const defaultThresholds = {
+    buyThreshold: SIGNAL_THRESHOLDS.SIGNAL_BUY,
+    strongBuyThreshold: SIGNAL_THRESHOLDS.SIGNAL_STRONG_BUY,
+    sellThreshold: SIGNAL_THRESHOLDS.SIGNAL_SELL,
+    strongSellThreshold: SIGNAL_THRESHOLDS.SIGNAL_STRONG_SELL,
+    weakBuyThreshold: SIGNAL_THRESHOLDS.SIGNAL_WEAK_BUY,
+    weakSellThreshold: SIGNAL_THRESHOLDS.SIGNAL_WEAK_SELL
+  };
+
+  // 如果没有市场环境数据，返回默认阈值
+  if (!marketEnvironment) return defaultThresholds;
+
+  const thresholds = { ...defaultThresholds };
+
+  // 根据市场趋势调整阈值
+  if (marketEnvironment.trend) {
+    if (marketEnvironment.trend.includes('strong_bullish')) {
+      // 强牛市：降低买入阈值，提高卖出阈值（更容易买入，更难卖出）
+      thresholds.buyThreshold *= 0.8;
+      thresholds.strongBuyThreshold *= 0.85;
+      thresholds.weakBuyThreshold *= 0.7;
+      thresholds.sellThreshold *= 1.2;
+      thresholds.strongSellThreshold *= 1.3;
+    } else if (marketEnvironment.trend.includes('bullish')) {
+      // 牛市：适度降低买入阈值
+      thresholds.buyThreshold *= 0.9;
+      thresholds.strongBuyThreshold *= 0.95;
+      thresholds.sellThreshold *= 1.1;
+    } else if (marketEnvironment.trend.includes('strong_bearish')) {
+      // 强熊市：提高买入阈值，降低卖出阈值（更难买入，更容易卖出）
+      thresholds.buyThreshold *= 1.3;
+      thresholds.strongBuyThreshold *= 1.4;
+      thresholds.sellThreshold *= 0.7;
+      thresholds.strongSellThreshold *= 0.6;
+      thresholds.weakSellThreshold *= 0.8;
+    } else if (marketEnvironment.trend.includes('bearish')) {
+      // 熊市：适度提高买入阈值
+      thresholds.buyThreshold *= 1.1;
+      thresholds.strongBuyThreshold *= 1.2;
+      thresholds.sellThreshold *= 0.9;
+    }
+  }
+
+  // 根据波动率调整阈值
+  if (marketEnvironment.volatility) {
+    if (marketEnvironment.volatility === 'high') {
+      // 高波动：所有阈值适度放宽，避免频繁交易
+      Object.keys(thresholds).forEach(key => {
+        if (key.includes('buy') || key.includes('Buy')) {
+          thresholds[key] *= 1.1; // 买入阈值提高10%
+        } else {
+          thresholds[key] *= 0.9; // 卖出阈值降低10%
+        }
+      });
+    } else if (marketEnvironment.volatility === 'low') {
+      // 低波动：阈值收紧，更敏感地捕捉信号
+      Object.keys(thresholds).forEach(key => {
+        if (key.includes('buy') || key.includes('Buy')) {
+          thresholds[key] *= 0.95; // 买入阈值降低5%
+        } else {
+          thresholds[key] *= 1.05; // 卖出阈值提高5%
+        }
+      });
+    }
+  }
+
+  // 根据市场状态调整
+  if (marketEnvironment.regime) {
+    if (marketEnvironment.regime === 'bull_market') {
+      // 牛市状态：偏向买入
+      thresholds.buyThreshold *= 0.9;
+      thresholds.weakBuyThreshold *= 0.8;
+    } else if (marketEnvironment.regime === 'bear_market') {
+      // 熊市状态：偏向卖出
+      thresholds.sellThreshold *= 0.9;
+      thresholds.weakSellThreshold *= 0.8;
+    } else if (marketEnvironment.regime === 'high_volatility') {
+      // 高波动状态：更保守
+      thresholds.buyThreshold *= 1.15;
+      thresholds.sellThreshold *= 0.85;
+    }
+  }
+
+  // 根据置信度调整：置信度越高，阈值调整幅度越大
+  if (marketEnvironment.confidence) {
+    const confidenceMultiplier = 0.5 + marketEnvironment.confidence * 0.5; // 0.5-1.0
+    
+    // 对所有调整应用置信度权重
+    Object.keys(thresholds).forEach(key => {
+      const adjustment = thresholds[key] - defaultThresholds[key];
+      thresholds[key] = defaultThresholds[key] + adjustment * confidenceMultiplier;
+    });
+  }
+
+  return thresholds;
+}
+
+/**
+ * 增强信号生成（智能决策版本 - 避免信号矛盾，结合自适应环境优化）
+ * 综合多个技术指标生成交易信号，根据市场环境动态调整权重和阈值
  * @param {number} current - 当前价格
  * @param {number} buy - 买入阈值价格
  * @param {number} sell - 卖出阈值价格
@@ -508,8 +612,9 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
   // 收集所有信号源
   const signalSources = [];
 
-  // 优化：根据市场环境动态调整权重
+  // 🚀 增强：根据市场环境动态调整权重和信号阈值
   const weights = getAdaptiveWeights(marketEnvironment);
+  const adaptiveThresholds = getAdaptiveSignalThresholds(marketEnvironment);
 
   // 1. 基础价格信号
   let priceSignal = 0;
@@ -595,13 +700,21 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
     weightedSignal = weightedSignal / totalWeight;
   }
 
-  // 决定最终信号（优化：使用配置常量）
+  // 🚀 增强：决定最终信号（使用自适应阈值）
   let finalSignal = '持有';
   let signalColor = 'green';
   let confidence = '中等';
 
-  if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_BUY) {
-    if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_STRONG_BUY && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
+  // 使用自适应阈值替代固定阈值
+  const buyThreshold = adaptiveThresholds.buyThreshold;
+  const strongBuyThreshold = adaptiveThresholds.strongBuyThreshold;
+  const sellThreshold = adaptiveThresholds.sellThreshold;
+  const strongSellThreshold = adaptiveThresholds.strongSellThreshold;
+  const weakBuyThreshold = adaptiveThresholds.weakBuyThreshold;
+  const weakSellThreshold = adaptiveThresholds.weakSellThreshold;
+
+  if (weightedSignal > buyThreshold) {
+    if (weightedSignal > strongBuyThreshold && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
       finalSignal = '强烈买入';
       confidence = '高';
     } else {
@@ -609,8 +722,8 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
       confidence = signalStrength > SIGNAL_THRESHOLDS.STRENGTH_MEDIUM ? '高' : '中等';
     }
     signalColor = 'blue';
-  } else if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_SELL) {
-    if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_STRONG_SELL && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
+  } else if (weightedSignal < sellThreshold) {
+    if (weightedSignal < strongSellThreshold && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_HIGH) {
       finalSignal = '强烈卖出';
       confidence = '高';
     } else {
@@ -620,10 +733,10 @@ function generateEnhancedSignal(current, buy, sell, technicalScore, indicators, 
     signalColor = 'red';
   } else {
     // 中性区间，根据信号强度决定是否给出弱势信号
-    if (weightedSignal > SIGNAL_THRESHOLDS.SIGNAL_WEAK_BUY && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
+    if (weightedSignal > weakBuyThreshold && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
       finalSignal = '弱势买入';
       signalColor = 'blue';
-    } else if (weightedSignal < SIGNAL_THRESHOLDS.SIGNAL_WEAK_SELL && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
+    } else if (weightedSignal < weakSellThreshold && signalStrength > SIGNAL_THRESHOLDS.STRENGTH_LOW) {
       finalSignal = '弱势卖出';
       signalColor = 'red';
     }

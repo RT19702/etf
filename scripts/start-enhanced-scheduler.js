@@ -364,6 +364,8 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
 
     // 强制推送使用高优先级，可以绕过重复内容检测
     const pushPriority = actualForcePush ? 'high' : 'normal';
+    
+    // 🚀 增强：传入自适应环境数据到推送决策
     const pushDecision = pushManager.smartPushDecision({
       content: pushContent,
       type: 'wechat',
@@ -371,6 +373,9 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       signals,
       priceChanges,
       technicalScores,
+      marketEnvironment: report.marketEnvironment || null,
+      sectorRotation: report.sectorRotation || null,
+      policyTrends: report.policyTrends || null,
       now
     });
 

@@ -173,8 +173,8 @@ class PushManager {
   }
 
   /**
-   * 智能推送决策
-   * 综合考虑多个因素决定是否推送
+   * 智能推送决策（增强版 - 结合自适应环境优化）
+   * 综合考虑多个因素决定是否推送，包括市场环境、行业轮动等自适应因素
    * @param {Object} options - 推送选项
    * @returns {Object} 决策结果
    */
@@ -186,6 +186,9 @@ class PushManager {
       signals = [],
       priceChanges = [],
       technicalScores = [],
+      marketEnvironment = null,
+      sectorRotation = null,
+      policyTrends = null,
       now = dayjs()
     } = options;
 
@@ -193,7 +196,8 @@ class PushManager {
       shouldPush: false,
       reason: '',
       score: 0,
-      factors: {}
+      factors: {},
+      adaptiveFactors: {}
     };
 
     // 基础推送检查
@@ -235,6 +239,10 @@ class PushManager {
     }
     decision.factors.technicalScore = { score: techScore, count: technicalScores.length, validCount: technicalScores.filter(score => !isNaN(score) && isFinite(score)).length };
 
+    // 🚀 新增：自适应环境因子评分
+    const adaptiveScore = this._calculateAdaptiveScore(marketEnvironment, sectorRotation, policyTrends);
+    decision.adaptiveFactors = adaptiveScore;
+
     if (!canPushResult.allow) {
       decision.reason = `基础检查失败: ${canPushResult.reason}`;
       return decision;
@@ -249,19 +257,120 @@ class PushManager {
       return decision;
     }
 
+    // 🚀 增强：结合自适应环境的综合评分计算
+    const baseScore = signalQualityScore * 0.3 + priceChangeScore * 0.25 + techScore * 0.25;
+    const adaptiveBonus = adaptiveScore.totalScore * 0.2; // 自适应因子占20%权重
+    decision.score = baseScore + adaptiveBonus;
 
+    // 🚀 增强：根据市场环境动态调整推送阈值
+    let pushThreshold = priority === 'high' ? 30 : priority === 'low' ? 70 : 50;
+    
+    // 根据市场环境调整阈值
+    if (marketEnvironment) {
+      if (marketEnvironment.regime === 'bull_market') {
+        pushThreshold *= 0.9; // 牛市降低阈值，更容易推送
+      } else if (marketEnvironment.regime === 'bear_market') {
+        pushThreshold *= 1.1; // 熊市提高阈值，更谨慎推送
+      } else if (marketEnvironment.volatility === 'high') {
+        pushThreshold *= 0.8; // 高波动时降低阈值，及时推送
+      }
+    }
 
-    // 综合评分计算
-    decision.score = signalQualityScore * 0.4 + priceChangeScore * 0.3 + techScore * 0.3;
-
-    // 推送决策阈值
-    const pushThreshold = priority === 'high' ? 30 : priority === 'low' ? 70 : 50;
     decision.shouldPush = decision.score >= pushThreshold;
     decision.reason = decision.shouldPush ?
-      `综合评分${decision.score.toFixed(1)}超过阈值${pushThreshold}` :
-      `综合评分${decision.score.toFixed(1)}低于阈值${pushThreshold}`;
+      `综合评分${decision.score.toFixed(1)}超过动态阈值${pushThreshold.toFixed(1)}` :
+      `综合评分${decision.score.toFixed(1)}低于动态阈值${pushThreshold.toFixed(1)}`;
 
     return decision;
+  }
+
+  /**
+   * 计算自适应环境评分
+   * @private
+   */
+  _calculateAdaptiveScore(marketEnvironment, sectorRotation, policyTrends) {
+    const scores = {
+      marketEnvironment: 0,
+      sectorRotation: 0,
+      policyTrends: 0,
+      totalScore: 0
+    };
+
+    // 市场环境评分
+    if (marketEnvironment) {
+      let envScore = 50; // 基准分数
+
+      // 趋势加分
+      if (marketEnvironment.trend) {
+        if (marketEnvironment.trend.includes('strong_bullish')) {
+          envScore += 25;
+        } else if (marketEnvironment.trend.includes('bullish')) {
+          envScore += 15;
+        } else if (marketEnvironment.trend.includes('bearish')) {
+          envScore -= 10;
+        }
+      }
+
+      // 置信度加分
+      if (marketEnvironment.confidence) {
+        envScore += (marketEnvironment.confidence - 0.5) * 20;
+      }
+
+      // 市场广度加分
+      if (marketEnvironment.breadth && marketEnvironment.breadth.breadth > 0.6) {
+        envScore += 10;
+      }
+
+      scores.marketEnvironment = Math.max(0, Math.min(100, envScore));
+    }
+
+    // 行业轮动评分
+    if (sectorRotation) {
+      let rotationScore = 50;
+
+      // 强势行业数量加分
+      if (sectorRotation.strongSectors && sectorRotation.strongSectors.length > 0) {
+        rotationScore += Math.min(sectorRotation.strongSectors.length * 5, 25);
+      }
+
+      // 资金流入加分
+      if (sectorRotation.capitalFlow && sectorRotation.capitalFlow.inflowSectors.length > 0) {
+        rotationScore += Math.min(sectorRotation.capitalFlow.inflowSectors.length * 3, 15);
+      }
+
+      // 轮动强度加分
+      if (sectorRotation.summary && sectorRotation.summary.topSectorScore > 70) {
+        rotationScore += 10;
+      }
+
+      scores.sectorRotation = Math.max(0, Math.min(100, rotationScore));
+    }
+
+    // 政策导向评分
+    if (policyTrends) {
+      let policyScore = 50;
+
+      // 政策信号强度加分
+      if (policyTrends.summary && policyTrends.summary.strongSignalCount > 0) {
+        policyScore += Math.min(policyTrends.summary.strongSignalCount * 10, 30);
+      }
+
+      // 主题置信度加分
+      if (policyTrends.summary && policyTrends.summary.confidence > 0.6) {
+        policyScore += (policyTrends.summary.confidence - 0.5) * 20;
+      }
+
+      scores.policyTrends = Math.max(0, Math.min(100, policyScore));
+    }
+
+    // 计算总分（加权平均）
+    const weights = { marketEnvironment: 0.4, sectorRotation: 0.35, policyTrends: 0.25 };
+    scores.totalScore = 
+      scores.marketEnvironment * weights.marketEnvironment +
+      scores.sectorRotation * weights.sectorRotation +
+      scores.policyTrends * weights.policyTrends;
+
+    return scores;
   }
 
   // 标记内容已发送
