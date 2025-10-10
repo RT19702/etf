@@ -114,11 +114,18 @@ class MarketEnvironmentDetector {
    */
   detectSentiment(etfData) {
     // 统计信号分布
-    const signals = etfData.map(etf => etf.signal || '');
-    const buySignals = signals.filter(s => s.includes('买入')).length;
-    const sellSignals = signals.filter(s => s.includes('卖出')).length;
-    const strongBuySignals = signals.filter(s => s.includes('强烈买入')).length;
-    const strongSellSignals = signals.filter(s => s.includes('强烈卖出')).length;
+    const signals = etfData.map(etf => {
+      const signal = etf.signal || '';
+      // 处理信号对象和字符串两种情况
+      if (typeof signal === 'object' && signal.level) {
+        return signal.level;
+      }
+      return typeof signal === 'string' ? signal : '';
+    });
+    const buySignals = signals.filter(s => s && s.includes && s.includes('买入')).length;
+    const sellSignals = signals.filter(s => s && s.includes && s.includes('卖出')).length;
+    const strongBuySignals = signals.filter(s => s && s.includes && s.includes('强烈买入')).length;
+    const strongSellSignals = signals.filter(s => s && s.includes && s.includes('强烈卖出')).length;
 
     const totalSignals = buySignals + sellSignals;
     if (totalSignals === 0) return 'neutral';
