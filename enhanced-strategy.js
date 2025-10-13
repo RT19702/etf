@@ -982,6 +982,29 @@ function getRiskLevel(volatilityStr) {
   return '高风险';
 }
 
+// 获取风险等级文本（用于持仓分析）
+function getRiskLevelText(level) {
+  const levelMap = {
+    'low': '🟢 低风险',
+    'medium': '🟡 中风险', 
+    'high': '🔴 高风险'
+  };
+  return levelMap[level] || '❓ 未知';
+}
+
+// 获取状态图标（用于持仓分析）
+function getStatusIcon(status) {
+  const statusMap = {
+    'excellent': '🌟',
+    'good': '👍',
+    'positive': '📈',
+    'neutral': '➡️',
+    'poor': '👎',
+    'critical': '⚠️'
+  };
+  return statusMap[status] || '❓';
+}
+
 // 企业微信推送函数
 async function sendWeChatNotification(report) {
   try {
@@ -1023,6 +1046,74 @@ function formatEnhancedWeChatReport(report) {
     content += `**报告时间**: ${dayjs(report.generatedAt).format('YYYY-MM-DD HH:mm:ss')}\n\n`;
   } else {
     content += `**报告时间**: ${report.date}\n\n`;
+  }
+
+  // 💼 新增：持仓分析部分
+  try {
+    const PositionAnalyzer = require('./src/utils/positionAnalyzer');
+    const positionAnalyzer = new PositionAnalyzer();
+    const positionAnalysis = positionAnalyzer.analyzePositions(report);
+    
+    if (positionAnalysis && positionAnalysis.totalPositions > 0) {
+      content += `## 💼 持仓分析\n\n`;
+      
+      // 总体表现
+      const { summary, riskAssessment, positions } = positionAnalysis;
+      content += `### 📊 总体表现\n`;
+      content += `- **总市值**: ¥${summary.totalValue}\n`;
+      content += `- **总成本**: ¥${summary.totalCost}\n`;
+      content += `- **总盈亏**: ¥${summary.totalPnL} (${summary.totalPnLPercent}%)\n`;
+      content += `- **风险等级**: ${getRiskLevelText(riskAssessment.level)}\n`;
+      content += `- **持仓数量**: ${summary.positionCount}个\n\n`;
+      
+      // 持仓详情
+      if (positions && positions.length > 0) {
+        content += `### 📋 持仓详情\n`;
+        positions.forEach((position, index) => {
+          const pnlIcon = position.pnl >= 0 ? '📈' : '📉';
+          const statusIcon = getStatusIcon(position.status);
+          
+          content += `${index + 1}. **${position.name}** (${position.symbol}) ${statusIcon}\n`;
+          content += `   - 成本: ¥${position.costPrice} | 现价: ¥${position.currentPrice}\n`;
+          content += `   - 盈亏: ${pnlIcon} ¥${position.pnl.toFixed(2)} (${position.pnlPercent.toFixed(2)}%)\n`;
+          
+          if (position.recommendation.targetPrice) {
+            content += `   - 目标价: ¥${position.recommendation.targetPrice}\n`;
+          }
+          
+          if (position.technicalAnalysis.technicalScore) {
+            content += `   - 技术评分: ${position.technicalAnalysis.technicalScore}/100\n`;
+          }
+          
+          if (position.recommendation.priority === 'high') {
+            content += `   - ⚠️ **建议**: ${position.recommendation.action}\n`;
+            content += `   - 💡 **原因**: ${position.recommendation.reason}\n`;
+          }
+          content += `\n`;
+        });
+      }
+      
+      // 投资建议
+      if (positionAnalysis.recommendations && positionAnalysis.recommendations.length > 0) {
+        content += `### 💡 投资建议\n`;
+        positionAnalysis.recommendations.forEach((rec, index) => {
+          const priorityIcon = rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢';
+          content += `${index + 1}. ${priorityIcon} **${rec.title}**\n`;
+          content += `   ${rec.description}\n\n`;
+        });
+      }
+      
+      // 风险提示
+      if (riskAssessment.factors && riskAssessment.factors.length > 0) {
+        content += `### ⚠️ 风险提示\n`;
+        riskAssessment.factors.forEach(factor => {
+          content += `- ${factor}\n`;
+        });
+        content += `\n`;
+      }
+    }
+  } catch (error) {
+    console.log(color(`⚠️ 持仓分析失败: ${error.message}`, 'yellow'));
   }
 
   // 修复：添加市场环境分析（优化后的新功能）

@@ -220,7 +220,12 @@ class ETFScheduler {
         const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
         
         if (this.wechatBot) {
-          const content = this.wechatBot.formatETFReport(report);
+          // 分析持仓数据
+          const PositionAnalyzer = require('../utils/positionAnalyzer');
+          const positionAnalyzer = new PositionAnalyzer();
+          const positionAnalysis = positionAnalyzer.analyzePositions(report);
+          
+          const content = this.wechatBot.formatETFReport(report, positionAnalysis);
           await this.wechatBot.sendMarkdown(content);
         }
       }

@@ -173,13 +173,20 @@ class WeChatBot {
   /**
    * 格式化ETF策略消息
    * @param {Object} report - ETF报告数据
+   * @param {Object} positionAnalysis - 持仓分析数据（可选）
    */
-  formatETFReport(report) {
+  formatETFReport(report, positionAnalysis = null) {
     const { summary, data } = report;
     
     // 构建Markdown格式的消息
     let content = `# 📊 ETF轮动策略报告\n\n`;
     content += `**报告时间**: ${report.date}\n\n`;
+    
+    // 持仓分析部分（如果有持仓数据）
+    if (positionAnalysis && positionAnalysis.totalPositions > 0) {
+      content += this._formatPositionAnalysis(positionAnalysis);
+      content += `\n`;
+    }
     
     // 核心推荐信息
     content += `## 🎯 策略推荐\n`;
@@ -222,9 +229,14 @@ class WeChatBot {
     
     // 特别关注提示
     if (report.specialWatchAlerts && report.specialWatchAlerts.length > 0) {
-      const SpecialWatchManager = require('./specialWatch');
-      const specialWatchManager = new SpecialWatchManager();
-      content += specialWatchManager.formatAlertsText(report.specialWatchAlerts);
+      try {
+        const SpecialWatchManager = require('./specialWatch');
+        const specialWatchManager = new SpecialWatchManager();
+        content += specialWatchManager.formatAlertsText(report.specialWatchAlerts);
+      } catch (error) {
+        // 如果特别关注模块不可用，跳过
+        console.log('特别关注模块不可用，跳过');
+      }
     }
 
     // 风险提示
@@ -238,6 +250,100 @@ class WeChatBot {
     content += `*本报告由ETF轮动策略系统自动生成，仅供参考，投资有风险*`;
     
     return content;
+  }
+
+  /**
+   * 格式化持仓分析用于企业微信
+   * @private
+   */
+  _formatPositionAnalysis(positionAnalysis) {
+    let content = `## 💼 持仓分析\n\n`;
+    
+    // 总体表现
+    const { summary, riskAssessment, positions } = positionAnalysis;
+    content += `### 📊 总体表现\n`;
+    content += `- **总市值**: ¥${summary.totalValue}\n`;
+    content += `- **总成本**: ¥${summary.totalCost}\n`;
+    content += `- **总盈亏**: ¥${summary.totalPnL} (${summary.totalPnLPercent}%)\n`;
+    content += `- **风险等级**: ${this._getRiskLevelText(riskAssessment.level)}\n`;
+    content += `- **持仓数量**: ${summary.positionCount}个\n\n`;
+    
+    // 持仓详情
+    if (positions && positions.length > 0) {
+      content += `### 📋 持仓详情\n`;
+      positions.forEach((position, index) => {
+        const pnlIcon = position.pnl >= 0 ? '📈' : '📉';
+        const statusIcon = this._getStatusIcon(position.status);
+        
+        content += `${index + 1}. **${position.name}** (${position.symbol}) ${statusIcon}\n`;
+        content += `   - 成本: ¥${position.costPrice} | 现价: ¥${position.currentPrice}\n`;
+        content += `   - 盈亏: ${pnlIcon} ¥${position.pnl.toFixed(2)} (${position.pnlPercent.toFixed(2)}%)\n`;
+        
+        if (position.recommendation.targetPrice) {
+          content += `   - 目标价: ¥${position.recommendation.targetPrice}\n`;
+        }
+        
+        if (position.technicalAnalysis.technicalScore) {
+          content += `   - 技术评分: ${position.technicalAnalysis.technicalScore}/100\n`;
+        }
+        
+        if (position.recommendation.priority === 'high') {
+          content += `   - ⚠️ **建议**: ${position.recommendation.action}\n`;
+          content += `   - 💡 **原因**: ${position.recommendation.reason}\n`;
+        }
+        content += `\n`;
+      });
+    }
+    
+    // 投资建议
+    if (positionAnalysis.recommendations && positionAnalysis.recommendations.length > 0) {
+      content += `### 💡 投资建议\n`;
+      positionAnalysis.recommendations.forEach((rec, index) => {
+        const priorityIcon = rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢';
+        content += `${index + 1}. ${priorityIcon} **${rec.title}**\n`;
+        content += `   ${rec.description}\n\n`;
+      });
+    }
+    
+    // 风险提示
+    if (riskAssessment.factors && riskAssessment.factors.length > 0) {
+      content += `### ⚠️ 风险提示\n`;
+      riskAssessment.factors.forEach(factor => {
+        content += `- ${factor}\n`;
+      });
+      content += `\n`;
+    }
+    
+    return content;
+  }
+
+  /**
+   * 获取风险等级文本
+   * @private
+   */
+  _getRiskLevelText(level) {
+    const levelMap = {
+      'low': '🟢 低风险',
+      'medium': '🟡 中风险', 
+      'high': '🔴 高风险'
+    };
+    return levelMap[level] || '❓ 未知';
+  }
+
+  /**
+   * 获取状态图标
+   * @private
+   */
+  _getStatusIcon(status) {
+    const statusMap = {
+      'excellent': '🌟',
+      'good': '👍',
+      'positive': '📈',
+      'neutral': '➡️',
+      'poor': '👎',
+      'critical': '⚠️'
+    };
+    return statusMap[status] || '❓';
   }
 }
 
