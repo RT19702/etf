@@ -1057,14 +1057,8 @@ function formatEnhancedWeChatReport(report) {
     if (positionAnalysis && positionAnalysis.totalPositions > 0) {
       content += `## 💼 持仓分析\n\n`;
       
-      // 总体表现
-      const { summary, riskAssessment, positions } = positionAnalysis;
-      content += `### 📊 总体表现\n`;
-      content += `- **总市值**: ¥${summary.totalValue}\n`;
-      content += `- **总成本**: ¥${summary.totalCost}\n`;
-      content += `- **总盈亏**: ¥${summary.totalPnL} (${summary.totalPnLPercent}%)\n`;
-      content += `- **风险等级**: ${getRiskLevelText(riskAssessment.level)}\n`;
-      content += `- **持仓数量**: ${summary.positionCount}个\n\n`;
+      // 直接显示持仓详情，去除总体表现
+      const { positions } = positionAnalysis;
       
       // 持仓详情
       if (positions && positions.length > 0) {

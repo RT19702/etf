@@ -457,32 +457,8 @@ class PositionAnalyzer {
       <section class="position-section">
         <h2>💼 持仓分析</h2>
         
-        <!-- 总体表现 -->
-        <div class="position-summary">
-          <div class="summary-cards">
-            <div class="summary-card ${analysis.summary.status}">
-              <h3>总体表现</h3>
-              <p class="highlight">${analysis.summary.message}</p>
-              <div class="summary-details">
-                <span>总市值: ¥${analysis.summary.totalValue}</span>
-                <span>总成本: ¥${analysis.summary.totalCost}</span>
-                <span>盈亏: ¥${analysis.summary.totalPnL}</span>
-              </div>
-            </div>
-            
-            <div class="summary-card risk-${analysis.riskAssessment.level}">
-              <h3>风险评估</h3>
-              <p class="risk-level">风险等级: ${analysis.riskAssessment.level === 'high' ? '高' : analysis.riskAssessment.level === 'medium' ? '中' : '低'}</p>
-              <div class="risk-factors">
-                ${analysis.riskAssessment.factors.map(factor => `<span class="risk-factor">${factor}</span>`).join('')}
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- 持仓详情 -->
         <div class="positions-detail">
-          <h3>持仓详情</h3>
           <div class="positions-grid">
     `;
 

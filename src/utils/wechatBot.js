@@ -259,14 +259,8 @@ class WeChatBot {
   _formatPositionAnalysis(positionAnalysis) {
     let content = `## 💼 持仓分析\n\n`;
     
-    // 总体表现
-    const { summary, riskAssessment, positions } = positionAnalysis;
-    content += `### 📊 总体表现\n`;
-    content += `- **总市值**: ¥${summary.totalValue}\n`;
-    content += `- **总成本**: ¥${summary.totalCost}\n`;
-    content += `- **总盈亏**: ¥${summary.totalPnL} (${summary.totalPnLPercent}%)\n`;
-    content += `- **风险等级**: ${this._getRiskLevelText(riskAssessment.level)}\n`;
-    content += `- **持仓数量**: ${summary.positionCount}个\n\n`;
+    // 直接显示持仓详情，去除总体表现
+    const { positions } = positionAnalysis;
     
     // 持仓详情
     if (positions && positions.length > 0) {
@@ -306,9 +300,9 @@ class WeChatBot {
     }
     
     // 风险提示
-    if (riskAssessment.factors && riskAssessment.factors.length > 0) {
+    if (positionAnalysis.riskAssessment && positionAnalysis.riskAssessment.factors && positionAnalysis.riskAssessment.factors.length > 0) {
       content += `### ⚠️ 风险提示\n`;
-      riskAssessment.factors.forEach(factor => {
+      positionAnalysis.riskAssessment.factors.forEach(factor => {
         content += `- ${factor}\n`;
       });
       content += `\n`;

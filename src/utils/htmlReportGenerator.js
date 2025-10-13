@@ -4,6 +4,7 @@ const path = require('path');
 const dayjs = require('dayjs');
 const timezone = require('dayjs/plugin/timezone');
 const utc = require('dayjs/plugin/utc');
+const PositionAnalyzer = require('./positionAnalyzer');
 
 // 配置dayjs时区插件
 dayjs.extend(utc);
@@ -14,6 +15,7 @@ class HTMLReportGenerator {
   constructor() {
     this.templatePath = path.join(__dirname, '../templates');
     this.outputPath = './data/reports';
+    this.positionAnalyzer = new PositionAnalyzer();
     
     // 确保输出目录存在
     if (!fs.existsSync(this.outputPath)) {
@@ -27,7 +29,10 @@ class HTMLReportGenerator {
    * @returns {string} HTML文件路径
    */
   generateEnhancedReport(report) {
-    const html = this._generateEnhancedHTML(report);
+    // 分析持仓数据
+    const positionAnalysis = this.positionAnalyzer.analyzePositions(report);
+    
+    const html = this._generateEnhancedHTML(report, positionAnalysis);
     const filename = `etf_report.html`;
     const filepath = path.join(this.outputPath, filename);
     
@@ -39,7 +44,7 @@ class HTMLReportGenerator {
    * 生成增强版HTML内容
    * @private
    */
-  _generateEnhancedHTML(report) {
+  _generateEnhancedHTML(report, positionAnalysis) {
     const strongBuys = report.data.filter(d => d.交易信号.includes('强烈买入'));
     const normalBuys = report.data.filter(d => d.交易信号.includes('买入') && !d.交易信号.includes('强烈买入'));
     const holds = report.data.filter(d => d.交易信号.includes('持有'));
@@ -113,6 +118,7 @@ class HTMLReportGenerator {
         </section>
 
         ${this._generateSpecialWatchSection(report.specialWatchAlerts)}
+        ${this.positionAnalyzer.formatForHTML(positionAnalysis)}
         ${this._generateOpportunitySection('💡 强烈买入机会', strongBuys, 'strong-buy')}
         ${this._generateOpportunitySection('📈 买入机会', normalBuys.slice(0, 10), 'buy')}
         ${this._generateETFTableSection(report.data)}
@@ -362,7 +368,8 @@ class HTMLReportGenerator {
         }
 
         .summary-section, .stats-section, .special-watch-section,
-        .opportunity-section, .table-section, .datasource-section {
+        .opportunity-section, .table-section, .datasource-section,
+        .position-section {
             background: rgba(255, 255, 255, 0.95);
             padding: 25px;
             border-radius: 15px;
@@ -649,6 +656,235 @@ class HTMLReportGenerator {
             margin-bottom: 5px;
         }
 
+        /* 持仓分析样式 */
+        .position-summary {
+            margin-bottom: 25px;
+        }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card.positive {
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+
+        .summary-card.negative {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+        }
+
+        .summary-card.neutral {
+            background: linear-gradient(135deg, #45b7d1, #96c93d);
+            color: white;
+        }
+
+        .summary-card.risk-high {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+        }
+
+        .summary-card.risk-medium {
+            background: linear-gradient(135deg, #feca57, #ff9ff3);
+            color: white;
+        }
+
+        .summary-card.risk-low {
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+
+        .summary-details {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-top: 10px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .risk-factors {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .risk-factor {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }
+
+        .positions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .position-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid;
+            transition: transform 0.3s ease;
+        }
+
+        .position-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .position-card.excellent { border-left-color: #4ecdc4; }
+        .position-card.good { border-left-color: #45b7d1; }
+        .position-card.positive { border-left-color: #96c93d; }
+        .position-card.neutral { border-left-color: #feca57; }
+        .position-card.poor { border-left-color: #ff9ff3; }
+        .position-card.critical { border-left-color: #ff6b6b; }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .position-header h4 {
+            margin: 0;
+            color: #333;
+        }
+
+        .position-status {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .position-info {
+            margin-bottom: 15px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+
+        .info-row .label {
+            color: #666;
+        }
+
+        .info-row .value {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .info-row .value.positive {
+            color: #28a745;
+        }
+
+        .info-row .value.negative {
+            color: #dc3545;
+        }
+
+        .technical-info {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+
+        .tech-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 0.85em;
+        }
+
+        .tech-item .label {
+            color: #666;
+        }
+
+        .tech-item .value {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .recommendation {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .recommendation h5 {
+            margin: 0 0 5px 0;
+            color: #1976d2;
+            font-size: 0.9em;
+        }
+
+        .recommendation-text {
+            margin: 0;
+            font-size: 0.85em;
+            color: #333;
+        }
+
+        .recommendations {
+            margin-top: 25px;
+        }
+
+        .recommendations-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .recommendation-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid;
+        }
+
+        .recommendation-item.priority-high {
+            border-left-color: #ff6b6b;
+        }
+
+        .recommendation-item.priority-medium {
+            border-left-color: #feca57;
+        }
+
+        .recommendation-item.priority-low {
+            border-left-color: #4ecdc4;
+        }
+
+        .recommendation-item h4 {
+            margin: 0 0 8px 0;
+            color: #333;
+            font-size: 1em;
+        }
+
+        .recommendation-item p {
+            margin: 0;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .no-positions {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
         /* 响应式设计 */
         @media (max-width: 768px) {
             .container {
@@ -667,13 +903,18 @@ class HTMLReportGenerator {
             .summary-grid,
             .stats-grid,
             .alerts-grid,
-            .opportunity-grid {
+            .opportunity-grid,
+            .summary-cards,
+            .positions-grid,
+            .recommendations-list {
                 grid-template-columns: 1fr;
             }
 
             .alert-data,
             .price-info,
-            .trade-range {
+            .trade-range,
+            .position-header,
+            .info-row {
                 flex-direction: column;
                 gap: 5px;
             }
