@@ -36,6 +36,56 @@ const COLORS = {
 function color(text, clr) { return (COLORS[clr] || '') + text + COLORS.reset; }
 function stripAnsi(str) { return str.replace(/\x1b\[[0-9;]*m/g, ''); }
 
+// 风险偏好中英文映射
+function translateRiskPreference(riskLevel) {
+  const riskMapping = {
+    'aggressive': '激进型',
+    'moderate_aggressive': '积极型', 
+    'moderate': '平衡型',
+    'moderate_conservative': '稳健型',
+    'conservative': '保守型'
+  };
+  return riskMapping[riskLevel] || riskLevel;
+}
+
+// 市场环境状态中英文映射
+function translateMarketStatus(status) {
+  const statusMapping = {
+    // 市场趋势
+    'strong_bullish': '强势上涨',
+    'bullish': '上涨',
+    'slightly_bullish': '小幅上涨',
+    'neutral': '中性',
+    'slightly_bearish': '小幅下跌',
+    'bearish': '下跌',
+    'strong_bearish': '强势下跌',
+    
+    // 波动率
+    'low': '低',
+    'normal': '正常',
+    'elevated': '偏高',
+    'high': '高',
+    
+    // 市场情绪
+    'very_bullish': '非常乐观',
+    'bullish': '乐观',
+    'slightly_bullish': '略乐观',
+    'neutral': '中性',
+    'slightly_bearish': '略悲观',
+    'bearish': '悲观',
+    'very_bearish': '非常悲观',
+    
+    // 市场状态
+    'bull_market': '牛市',
+    'bear_market': '熊市',
+    'high_volatility': '高波动',
+    'sideways_market': '震荡市',
+    'transitional': '过渡期',
+    'normal': '正常'
+  };
+  return statusMapping[status] || status;
+}
+
 // 优化：使用统一配置管理器
 const configManager = new ConfigManager();
 const CONFIG = configManager.loadConfig();
@@ -983,10 +1033,10 @@ function formatEnhancedWeChatReport(report) {
     // 趋势和波动率
     const trendColor = env.trend.includes('bullish') ? 'info' : env.trend.includes('bearish') ? 'warning' : 'comment';
     const volatilityColor = env.volatility === 'high' ? 'warning' : env.volatility === 'low' ? 'info' : 'comment';
-    content += `- **市场趋势**: <font color="${trendColor}">${env.trend}</font>\n`;
-    content += `- **波动率**: <font color="${volatilityColor}">${env.volatility}</font>\n`;
-    content += `- **市场情绪**: ${env.sentiment}\n`;
-    content += `- **市场状态**: <font color="info">${env.regime}</font>\n`;
+    content += `- **市场趋势**: <font color="${trendColor}">${translateMarketStatus(env.trend)}</font>\n`;
+    content += `- **波动率**: <font color="${volatilityColor}">${translateMarketStatus(env.volatility)}</font>\n`;
+    content += `- **市场情绪**: ${translateMarketStatus(env.sentiment)}\n`;
+    content += `- **市场状态**: <font color="info">${translateMarketStatus(env.regime)}</font>\n`;
     content += `- **分析置信度**: ${(env.confidence * 100).toFixed(0)}%\n\n`;
 
     // 市场广度和动量（如果有）
@@ -1037,36 +1087,6 @@ function formatEnhancedWeChatReport(report) {
       }
     }
     content += `\n`;
-  }
-
-  // 🚀 新增：智能配置方案
-  if (report.assetAllocation) {
-    const allocation = report.assetAllocation;
-    content += `## 🎯 智能配置方案\n`;
-    content += `- **风险偏好**: ${allocation.riskAppetite.level} (股票${(allocation.riskAppetite.equity * 100).toFixed(0)}%)\n`;
-    content += `- **预期收益**: ${allocation.expectedMetrics.expectedReturn.toFixed(2)}%\n`;
-    content += `- **预期风险**: ${allocation.expectedMetrics.expectedRisk.toFixed(2)}%\n`;
-    content += `- **夏普比率**: ${allocation.expectedMetrics.sharpeRatio.toFixed(2)}\n\n`;
-
-    // 核心配置（前5个）
-    if (allocation.etfAllocation.length > 0) {
-      content += `**核心配置**:\n`;
-      allocation.etfAllocation.slice(0, 5).forEach((item, index) => {
-        content += `${index + 1}. **${item.name}** (${(item.weight * 100).toFixed(1)}%)\n`;
-        content += `   - ${item.reason}\n`;
-      });
-      content += `\n`;
-    }
-
-    // 调仓建议
-    if (allocation.rebalanceAdvice.actions.length > 0) {
-      content += `**调仓建议**: ${allocation.rebalanceAdvice.summary}\n`;
-      allocation.rebalanceAdvice.actions.slice(0, 3).forEach(action => {
-        const actionColor = action.action === '买入' ? 'info' : action.action === '清仓' ? 'warning' : 'comment';
-        content += `- <font color="${actionColor}">${action.action}</font> ${action.name} (${(action.targetWeight * 100).toFixed(1)}%)\n`;
-      });
-      content += `\n`;
-    }
   }
 
   // 核心推荐（美化）
@@ -1189,8 +1209,8 @@ async function runEnhancedStrategy() {
     console.log(color('🔍 正在检测市场环境...', 'cyan'));
     try {
       currentMarketEnvironment = marketEnvironmentDetector.analyzeMarketEnvironment(results);
-      console.log(color(`📊 市场环境: ${currentMarketEnvironment.trend} | 波动率: ${currentMarketEnvironment.volatility}`, 'cyan'));
-      console.log(color(`   市场状态: ${currentMarketEnvironment.regime} | 置信度: ${(currentMarketEnvironment.confidence * 100).toFixed(0)}%`, 'cyan'));
+      console.log(color(`📊 市场环境: ${translateMarketStatus(currentMarketEnvironment.trend)} | 波动率: ${translateMarketStatus(currentMarketEnvironment.volatility)}`, 'cyan'));
+      console.log(color(`   市场状态: ${translateMarketStatus(currentMarketEnvironment.regime)} | 置信度: ${(currentMarketEnvironment.confidence * 100).toFixed(0)}%`, 'cyan'));
 
       // 记录市场环境检测日志
       logger.marketEnvironment(currentMarketEnvironment);
@@ -1254,7 +1274,7 @@ async function runEnhancedStrategy() {
           results
         );
 
-        console.log(color(`📊 风险偏好: ${assetAllocation.riskAppetite.level} (股票仓位${(assetAllocation.riskAppetite.equity * 100).toFixed(0)}%)`, 'cyan'));
+        console.log(color(`📊 风险偏好: ${translateRiskPreference(assetAllocation.riskAppetite.level)} (股票仓位${(assetAllocation.riskAppetite.equity * 100).toFixed(0)}%)`, 'cyan'));
         console.log(color(`   预期收益: ${assetAllocation.expectedMetrics.expectedReturn.toFixed(2)}% | 预期风险: ${assetAllocation.expectedMetrics.expectedRisk.toFixed(2)}%`, 'cyan'));
         console.log(color(`   配置数量: ${assetAllocation.etfAllocation.length}个ETF`, 'cyan'));
 
@@ -1265,7 +1285,7 @@ async function runEnhancedStrategy() {
         });
 
         logger.info('资产配置方案生成完成', {
-          riskLevel: assetAllocation.riskAppetite.level,
+          riskLevel: translateRiskPreference(assetAllocation.riskAppetite.level),
           etfCount: assetAllocation.etfAllocation.length,
           expectedReturn: assetAllocation.expectedMetrics.expectedReturn
         });
