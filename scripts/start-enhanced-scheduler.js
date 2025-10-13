@@ -406,8 +406,9 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       const reportWithPushTime = updateReportPushTimestamp(report, true);
 
       // 使用增强版策略的推送函数
+      // 传入 fullData 供持仓分析使用，避免仅有子集数据导致无法匹配现价
       const { sendWeChatNotification } = require('../enhanced-strategy');
-      await sendWeChatNotification({ ...reportWithPushTime, data: toPush, _simpleContent: pushContent });
+      await sendWeChatNotification({ ...reportWithPushTime, data: toPush, fullData: report.data, _simpleContent: pushContent });
 
       pushManager.markPushed('wechat', pushContent, [], now);
 

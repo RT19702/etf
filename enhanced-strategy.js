@@ -1052,7 +1052,9 @@ function formatEnhancedWeChatReport(report) {
   try {
     const PositionAnalyzer = require('./src/utils/positionAnalyzer');
     const positionAnalyzer = new PositionAnalyzer();
-    const positionAnalysis = positionAnalyzer.analyzePositions(report);
+    // 若存在 fullData（来自调度器原始完整data），用于提升匹配准确度
+    const marketDataForPositions = report.fullData ? { ...report, data: report.fullData } : report;
+    const positionAnalysis = positionAnalyzer.analyzePositions(marketDataForPositions);
     
     if (positionAnalysis && positionAnalysis.totalPositions > 0) {
       content += `## 💼 持仓分析\n\n`;
