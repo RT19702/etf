@@ -83,11 +83,23 @@ class MarketSentimentAnalyzer {
   // 计算动量指标
   calculateMomentum(etfStats) {
     const priceChanges = etfStats.map(etf => {
-      const change = (etf.current - etf.ma5) / etf.ma5;
+      // 使用今日涨跌幅而不是相对MA5的位置
+      let yesterdayClose = null;
+      if (etf.kline && etf.kline.length >= 2) {
+        yesterdayClose = etf.kline[etf.kline.length - 2].close;
+      } else if (etf.ma5) {
+        yesterdayClose = etf.ma5;
+      }
+      
+      if (!yesterdayClose || yesterdayClose <= 0) return 0;
+      
+      const change = (etf.current - yesterdayClose) / yesterdayClose;
       return change;
-    });
+    }).filter(change => !isNaN(change) && isFinite(change));
     
-    const avgChange = priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length;
+    const avgChange = priceChanges.length > 0 
+      ? priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length 
+      : 0;
     const positiveCount = priceChanges.filter(change => change > 0).length;
     const strongPositive = priceChanges.filter(change => change > 0.02).length;
     const strongNegative = priceChanges.filter(change => change < -0.02).length;

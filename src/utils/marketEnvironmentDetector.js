@@ -52,9 +52,20 @@ class MarketEnvironmentDetector {
    * 检测市场趋势
    */
   detectTrend(etfData, marketIndex) {
-    // 计算上涨ETF比例
+    // 计算上涨ETF比例（使用今日涨跌幅，而不是相对MA5的位置）
     const risingCount = etfData.filter(etf => {
-      const priceChange = (etf.current - etf.ma5) / etf.ma5;
+      // 获取昨收价：优先使用kline倒数第二天的收盘价
+      let yesterdayClose = null;
+      if (etf.kline && etf.kline.length >= 2) {
+        yesterdayClose = etf.kline[etf.kline.length - 2].close;
+      } else if (etf.ma5) {
+        // 如果没有kline数据，使用ma5作为参考（不太准确但总比没有好）
+        yesterdayClose = etf.ma5;
+      }
+      
+      if (!yesterdayClose || yesterdayClose <= 0) return false;
+      
+      const priceChange = (etf.current - yesterdayClose) / yesterdayClose;
       return priceChange > 0;
     }).length;
 
@@ -62,7 +73,16 @@ class MarketEnvironmentDetector {
 
     // 计算强势上涨比例
     const strongRisingCount = etfData.filter(etf => {
-      const priceChange = (etf.current - etf.ma5) / etf.ma5;
+      let yesterdayClose = null;
+      if (etf.kline && etf.kline.length >= 2) {
+        yesterdayClose = etf.kline[etf.kline.length - 2].close;
+      } else if (etf.ma5) {
+        yesterdayClose = etf.ma5;
+      }
+      
+      if (!yesterdayClose || yesterdayClose <= 0) return false;
+      
+      const priceChange = (etf.current - yesterdayClose) / yesterdayClose;
       return priceChange > 0.02; // 2%以上涨幅
     }).length;
 
@@ -156,7 +176,17 @@ class MarketEnvironmentDetector {
    */
   calculateMarketBreadth(etfData) {
     const advanceCount = etfData.filter(etf => {
-      const priceChange = (etf.current - etf.ma5) / etf.ma5;
+      // 使用今日涨跌幅判断
+      let yesterdayClose = null;
+      if (etf.kline && etf.kline.length >= 2) {
+        yesterdayClose = etf.kline[etf.kline.length - 2].close;
+      } else if (etf.ma5) {
+        yesterdayClose = etf.ma5;
+      }
+      
+      if (!yesterdayClose || yesterdayClose <= 0) return false;
+      
+      const priceChange = (etf.current - yesterdayClose) / yesterdayClose;
       return priceChange > 0;
     }).length;
 
@@ -176,10 +206,22 @@ class MarketEnvironmentDetector {
    */
   calculateMomentum(etfData) {
     const priceChanges = etfData.map(etf => {
-      return (etf.current - etf.ma5) / etf.ma5;
-    });
+      // 使用今日涨跌幅
+      let yesterdayClose = null;
+      if (etf.kline && etf.kline.length >= 2) {
+        yesterdayClose = etf.kline[etf.kline.length - 2].close;
+      } else if (etf.ma5) {
+        yesterdayClose = etf.ma5;
+      }
+      
+      if (!yesterdayClose || yesterdayClose <= 0) return 0;
+      
+      return (etf.current - yesterdayClose) / yesterdayClose;
+    }).filter(change => !isNaN(change) && isFinite(change)); // 过滤无效值
 
-    const avgChange = priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length;
+    const avgChange = priceChanges.length > 0 
+      ? priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length 
+      : 0;
     const positiveChanges = priceChanges.filter(change => change > 0);
     const negativeChanges = priceChanges.filter(change => change < 0);
 
