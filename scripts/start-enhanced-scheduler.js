@@ -67,6 +67,15 @@ console.log(color('  ✅ 统一配置管理', 'cyan'));
 console.log(color('  ✅ 完善日志系统', 'cyan'));
 console.log('');
 
+console.log(color('🎯 智能推荐功能:', 'bold'));
+console.log(color('  ✅ 基于市场环境的智能ETF推荐', 'green'));
+console.log(color('  ✅ 热点板块自动识别与权重调整', 'green'));
+console.log(color('  ✅ 资金流向分析与板块轮动检测', 'green'));
+console.log(color('  ✅ 政策导向分析与主题投资机会', 'green'));
+console.log(color('  ✅ 冷门板块回避机制', 'green'));
+console.log(color('  ✅ 自适应推送决策优化', 'green'));
+console.log('');
+
 logger.info('系统优化功能已启用', {
   features: [
     '市场环境检测',
@@ -74,7 +83,12 @@ logger.info('系统优化功能已启用', {
     '智能缓存',
     '自适应限流',
     '配置管理',
-    '日志系统'
+    '日志系统',
+    '智能ETF推荐',
+    '热点板块识别',
+    '资金流向分析',
+    '政策导向分析',
+    '自适应推送优化'
   ]
 });
 
@@ -201,7 +215,79 @@ function savePriceCache(cache) {
 let lastBuySignals = loadPriceCache(); // 从文件加载历史价格
 let scheduler; // 全局声明scheduler
 
-// 精简推送内容，仅保留关键信息
+// 🎯 智能推送内容格式化 - 结合市场环境和热点板块
+function formatSmartPushContent(signals, report) {
+  if (!signals || signals.length === 0) return '无买入机会';
+  
+  let content = `【🎯 智能ETF推荐推送】\n`;
+  
+  // 添加市场环境摘要
+  if (report.smartRecommendation && report.smartRecommendation.marketSummary) {
+    content += `📊 ${report.smartRecommendation.marketSummary}\n\n`;
+  }
+  
+  // 添加热点板块信息
+  if (report.smartRecommendation && report.smartRecommendation.hotSectors && report.smartRecommendation.hotSectors.length > 0) {
+    const hotSectors = report.smartRecommendation.hotSectors.slice(0, 3).map(h => `${h.sector}(${h.reason})`).join('、');
+    content += `🔥 热点板块: ${hotSectors}\n\n`;
+  }
+  
+  // 强烈推荐ETF
+  const strongRecommendations = report.smartRecommendation?.strongRecommendations || [];
+  if (strongRecommendations.length > 0) {
+    content += `🔥 强烈推荐:\n`;
+    strongRecommendations.forEach(rec => {
+      content += `• ${rec.name} (${rec.symbol}): ¥${rec.current} | 智能评分${rec.smartScore}/100\n`;
+    });
+    content += `\n`;
+  }
+  
+  // 普通买入机会
+  const otherSignals = signals.filter(s => 
+    !strongRecommendations.some(rec => rec.symbol === (s.代码 || s.symbol))
+  );
+  
+  if (otherSignals.length > 0) {
+    content += `📈 买入机会:\n`;
+    otherSignals.forEach(s => {
+      const sector = detectETFSector(s.ETF || s.名称 || s.name);
+      const isHotSector = report.smartRecommendation?.hotSectors?.some(h => h.sector === sector);
+      const hotIcon = isHotSector ? '🔥' : '';
+      content += `• ${hotIcon}${s.ETF || s.名称 || s.name}: ¥${s.当前价格} | ${s.交易信号}\n`;
+    });
+  }
+  
+  return content;
+}
+
+// 检测ETF所属板块
+function detectETFSector(etfName) {
+  const sectorMapping = {
+    '科技传媒': ['科技', '半导体', '芯片', '人工智能', '云计算', '5G', '集成电路', '显示面板', '传媒', '智能硬件'],
+    '新能源': ['新能源', '光伏', '储能', '电池', '氢能', '风能', '智能汽车', '智能车', '智能电网'],
+    '消费行业': ['消费', '食品饮料', '酒'],
+    '医疗行业': ['医药', '医疗', '生物医药', '医药生物'],
+    '金融行业': ['券商', '银行', '证券', '非银'],
+    '周期制造': ['工业', '机械装备', '装备制造', '高端制造', '智能制造', '钢铁', '建材'],
+    '军工国防': ['军工', '航天航空', '卫星通信'],
+    '能源化工': ['煤炭', '石油', '化工'],
+    '大宗商品': ['有色金属', '有色', '稀土永磁', '稀土'],
+    '贵金属': ['黄金', '白银'],
+    '地产基建': ['房地产', '基建'],
+    '环保公用': ['环保', '电力', '公用事业']
+  };
+
+  for (const [sector, keywords] of Object.entries(sectorMapping)) {
+    for (const keyword of keywords) {
+      if (etfName.includes(keyword)) {
+        return sector;
+      }
+    }
+  }
+  return '其他';
+}
+
+// 保留原始简单格式化函数作为备用
 function formatSimplePushContent(signals) {
   if (!signals || signals.length === 0) return '无买入机会';
   let content = `【ETF买入机会推送】\n`;
@@ -341,9 +427,11 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       savePriceCache(lastBuySignals);
     }
 
-    // 精简推送内容
-    const pushContent = formatSimplePushContent(toPush);
-    console.log(color(`📝 准备推送${toPush.length}个信号`, 'blue'));
+    // 🎯 智能推送内容格式化（优先使用智能格式，降级到简单格式）
+    const pushContent = report.smartRecommendation ? 
+      formatSmartPushContent(toPush, report) : 
+      formatSimplePushContent(toPush);
+    console.log(color(`📝 准备推送${toPush.length}个信号 ${report.smartRecommendation ? '(智能格式)' : '(简单格式)'}`, 'blue'));
 
     // 智能推送决策
     const signals = toPush.map(s => s.交易信号 || s.signal || '');
@@ -405,10 +493,18 @@ async function checkAndPushBuyOpportunities(forcePush = false, isForceInterval =
       // 更新报告推送时间戳
       const reportWithPushTime = updateReportPushTimestamp(report, true);
 
-      // 使用增强版策略的推送函数
-      // 传入 fullData 供持仓分析使用，避免仅有子集数据导致无法匹配现价
+      // 🎯 使用增强版策略的智能推送函数
+      // 传入完整的智能推荐数据和格式化内容
       const { sendWeChatNotification } = require('../enhanced-strategy');
-      await sendWeChatNotification({ ...reportWithPushTime, data: toPush, fullData: report.data, _simpleContent: pushContent });
+      const enhancedReport = { 
+        ...reportWithPushTime, 
+        data: toPush, 
+        fullData: report.data, 
+        _smartContent: pushContent,  // 智能格式化内容
+        _simpleContent: formatSimplePushContent(toPush)  // 备用简单内容
+      };
+      
+      await sendWeChatNotification(enhancedReport);
 
       pushManager.markPushed('wechat', pushContent, [], now);
 
