@@ -188,12 +188,6 @@ class WeChatBot {
       content += `\n`;
     }
     
-    // 核心推荐信息
-    content += `## 🎯 策略推荐\n`;
-    content += `- **推荐操作**: ${summary.推荐操作}\n`;
-    content += `- **推荐标的**: ${summary.推荐标的}\n`;
-    content += `- **市场趋势**: ${summary.市场趋势}\n\n`;
-    
     // 前三强势ETF
     if (summary.前三强势 && summary.前三强势.length > 0) {
       content += `## 🏆 前三强势ETF\n`;

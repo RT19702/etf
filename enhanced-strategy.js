@@ -1175,12 +1175,7 @@ function formatEnhancedWeChatReport(report) {
     }
     content += `\n`;
   }
-
-  // 核心推荐（美化）
-  content += `## 🎯 策略推荐\n`;
-  content += `- **推荐操作**: <font color="${report.summary.推荐操作.includes('买入') ? 'blue' : report.summary.推荐操作.includes('卖出') ? 'red' : 'black'}">${report.summary.推荐操作}</font>\n`;
-  content += `- **推荐标的**: <font color="green">${report.summary.推荐标的}</font>\n`;
-  content += `- **市场趋势**: <font color="orange">${report.summary.市场趋势}</font>\n\n`;
+  
   // 技术分析统计（美化）
   content += `## 📈 技术分析统计\n`;
   content += `**交易信号分布**:\n`;
